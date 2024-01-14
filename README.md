@@ -1,2 +1,2 @@
-# SimpleRayTracer
-A simple ray tracer suited for rendering geometrical optics
+# HumbleRayTracer
+A humble ray tracer for rendering geometrical optics
