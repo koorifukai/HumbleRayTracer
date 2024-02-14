@@ -269,7 +269,7 @@ class surface:
                                   [0, width / 2, height / 2],
                                   [0, width / 2, -height / 2]])
             self.cylindrical = True
-            if abs(self.radius) < abs(self.width):
+            if abs(self.radius) < abs(0.5*self.width):
                 self.radius = 1
                 self.width = 1
         elif shape == "plano":
@@ -481,6 +481,7 @@ def interact_vhnrs(v, h, n, r: ray, s: surface, forced=None):  # vector, hit, no
         r.trace.append(r_hit)
         stat = [h]
         ray_sta = extract_ray_info(r)
+        ray_sta.append(normalize(v))
         stat.extend(ray_sta)
         s.intersects.append(stat)
         return
@@ -494,6 +495,7 @@ def interact_vhnrs(v, h, n, r: ray, s: surface, forced=None):  # vector, hit, no
         r.trace.append(r_hit)
         stat = [h]
         ray_sta = extract_ray_info(r)
+        ray_sta.append(normalize(v))
         stat.extend(ray_sta)
         s.intersects.append(stat)
         return
@@ -525,6 +527,7 @@ def interact_vhnrs(v, h, n, r: ray, s: surface, forced=None):  # vector, hit, no
         r.trace.append(r_hit)
         stat = [h]
         ray_sta = extract_ray_info(r)
+        ray_sta.append(normalize(v))
         stat.extend(ray_sta)
         s.intersects.append(stat)
         r.active = False
@@ -540,6 +543,7 @@ def interact_vhnrs(v, h, n, r: ray, s: surface, forced=None):  # vector, hit, no
         r.trace.append(r_hit)
         stat = [h]
         ray_sta = extract_ray_info(r)
+        ray_sta.append(normalize(v))
         stat.extend(ray_sta)
         s.intersects.append(stat)
         return
@@ -620,6 +624,8 @@ def interact_cylinder(incident: ray, sur: surface):
             d = d2
         if abs(d[1] / r) - 1e-6 > sur.width / r / 2:
             return
+        if v[0] ==0:
+            return
         dz = t_last + abs(d[0] - t_last[0]) / abs(v[0]) * v
         if abs(dz[2]) - 1e-6 > sur.height / 2:
             return
@@ -674,7 +680,7 @@ def lens_vertices(radius, semidia):
 
 def cylinder_vertices(radius, height, width):
     r = abs(radius)
-    rad = 0.5 * np.arcsin(width / r)
+    rad = np.arcsin(0.5*width / r)
     theta = np.linspace(-rad, rad, lens_display_phi)
 
     x = -1 * radius * np.cos(theta)
@@ -924,7 +930,6 @@ class light:
         transformed = np.dot(rot, plotted.transpose())
         return transformed.transpose()
 
-
 class train:
     def __init__(self, show_normal=True, show_surfaces=True):
         self.surfaces = []
@@ -1011,7 +1016,6 @@ class train:
             self.longest = max(self.longest, r.travel())
         for r in self.rays:
             r.peer_dist = self.longest
-
     def render(self, ax):
         self.plot_rays(ax)
         if self.show_surfaces is True:
@@ -1278,19 +1282,21 @@ def simple_ray_tracer_main_w_analysis(parameters):
             base = np.stack([xs,ys],axis=1)
         rhr = np.radians(s.dial)
         rtm = np.array([[np.cos(rhr),-np.sin(rhr)],[np.sin(rhr),np.cos(rhr)]])
-        for k,r in enumerate(s.intersects):
-            coord = r[0]
+        base = np.dot(base, rtm)
+        ax.fill(base[:, 0], base[:, 1], color='k', alpha=0.1)
+
+        for k,stat in enumerate(s.intersects):
+            coord = stat[0]
             reduc = coord[1:3]
             reduc = np.dot(reduc,rtm)
-            wv = r[1]
-            inten = r[2]
+            wv = stat[1]
+            inten = stat[2]
+            vec = stat[3]
             c=(1,1,1)
             if isinstance(wv,int):
                 if wv!=0:
                     c=wavelength2rgb(wv)
             ax.scatter(reduc[0],reduc[1],color=c,marker='o',alpha=inten)
-        base = np.dot(base,rtm)
-        ax.fill(base[:,0],base[:,1],color='k',alpha=0.1)
 
         ax.set_title("surface"+str(s.sid)+","+s.shape)
         ylocs, lbls = plt.yticks()
@@ -1384,8 +1390,10 @@ def ota():
     fig.canvas.draw()
     data = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
     data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
-    cv.imwrite("rendering.jpg",cv.cvtColor(data,cv.COLOR_BGR2RGB))
-    fig.canvas.manager.window.wm_geometry("+%d+%d"%(10,10))
+    global via_gui
+    if via_gui is True:
+      cv.imwrite("rendering.jpg",cv.cvtColor(data,cv.COLOR_BGR2RGB))
+      fig.canvas.manager.window.wm_geometry("+%d+%d"%(10,10))
     plt.show()
 
 #GUI
