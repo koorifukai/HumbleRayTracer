@@ -6,7 +6,7 @@ plt.style.use('dark_background')
 plt.rcParams["font.size"] = 15
 from mpl_toolkits.mplot3d import Axes3D
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-import cv2 as cv
+#import cv2 as cv
 import os
 import math
 import yaml
@@ -25,7 +25,12 @@ obj_display_density=0.5
 show_grid = True
 fill_with_grey = False
 density_for_intensity=True
+show_plot = True
+coexist = True
 #    fig, ax = plt.subplots(subplot_kw={'projection': '3d'})
+
+angle_to_normal = 'element' #choose between element and hit
+hit_coordinates = 'absolute' #choose between absolute and relative
 
 def normalize(vec):
     scale = 1 / np.linalg.norm(vec[0:3])
@@ -274,7 +279,7 @@ class surface:
                 self.width = 1
         elif shape == "plano":
             self.radius = 0
-            if isinstance(semidia,float) and semidia==1: #which means the default param is not used
+            if isinstance(semidia,float) and semidia==1: #which means the default param is not used, its a round mirror
                 self.disk = False
                 self.height = height
                 self.width = width
@@ -458,6 +463,8 @@ class assembly:
         neu.last_surface=self.last_surface.copy()
         return neu
 def interact_vhnrs(v, h, n, r: ray, s: surface, forced=None):  # vector, hit, normal, ray2bupdated, surface
+    v_rel_from = v.copy()
+    v_abs_from = v.copy()
     if s.mode == "refraction" and forced is None or forced == "refraction":
         # vector representation of snell's law https://en.wikipedia.org/wiki/Snell%27s_law
         snell = s.n1 / s.n2
@@ -479,9 +486,10 @@ def interact_vhnrs(v, h, n, r: ray, s: surface, forced=None):  # vector, hit, no
         v = normalize(r_towards - r_hit)
         r.vec = v
         r.trace.append(r_hit)
-        stat = [h]
+        #store ray stats
+        stat = [r_hit]
         ray_sta = extract_ray_info(r)
-        ray_sta.append(normalize(v))
+        ray_sta.append(v_rel_from)
         stat.extend(ray_sta)
         s.intersects.append(stat)
         return
@@ -493,15 +501,16 @@ def interact_vhnrs(v, h, n, r: ray, s: surface, forced=None):  # vector, hit, no
         v = normalize(r_towards - r_hit)
         r.vec = v
         r.trace.append(r_hit)
-        stat = [h]
+        #store ray stats
+        stat = [r_hit]
         ray_sta = extract_ray_info(r)
-        ray_sta.append(normalize(v))
+        ray_sta.append(v_rel_from)
         stat.extend(ray_sta)
         s.intersects.append(stat)
         return
     if s.mode == "partial" and forced is None:
         r_hit = xdot(s.inverse, h)
-        shadow = ray(None, r_hit - 1e-3 * r.vec, r.vec, r.wv)
+        shadow = ray(None, r_hit - 1e-3 * r.vec, r.vec.copy(), r.wv)
         aa=s.transmission
         bb=1-s.transmission
         if s.transmission > 0.5:
@@ -525,9 +534,10 @@ def interact_vhnrs(v, h, n, r: ray, s: surface, forced=None):  # vector, hit, no
     if s.mode == "absorption":
         r_hit = xdot(s.inverse, h)
         r.trace.append(r_hit)
-        stat = [h]
+        #store ray stats
+        stat = [r_hit]
         ray_sta = extract_ray_info(r)
-        ray_sta.append(normalize(v))
+        ray_sta.append(v_rel_from)
         stat.extend(ray_sta)
         s.intersects.append(stat)
         r.active = False
@@ -541,9 +551,10 @@ def interact_vhnrs(v, h, n, r: ray, s: surface, forced=None):  # vector, hit, no
         v=not_yet_lambertian_reflection(v,s.fan)
         r.vec=v
         r.trace.append(r_hit)
-        stat = [h]
+        #store ray stats
+        stat = [r_hit]
         ray_sta = extract_ray_info(r)
-        ray_sta.append(normalize(v))
+        ray_sta.append(v_rel_from)
         stat.extend(ray_sta)
         s.intersects.append(stat)
         return
@@ -563,7 +574,6 @@ def not_yet_lambertian_reflection(vec,rad):
 def interact_sphere(incident: ray, sur: surface):
     # https://en.wikipedia.org/wiki/Line%E2%80%93sphere_intersection
     r = abs(sur.radius)
-
     last = incident.trace[-1]
     towards = last + incident.vec
     t_last = xdot(sur.move, last)
@@ -837,7 +847,7 @@ def save_figure(fig):
     fig.canvas.draw()
     data = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
     data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
-    cv.imwrite("rendering.jpg", cv.cvtColor(data, cv.COLOR_BGR2RGB))
+    #cv.imwrite("rendering.jpg", cv.cvtColor(data, cv.COLOR_BGR2RGB))
 
 class light:
     def __init__(self, position, vector, number=6,wavelength=0):
@@ -1031,11 +1041,26 @@ def parse_yaml_file(file_path):
         parsed_data = yaml.load(yaml_file, Loader=yaml.FullLoader)
     return parsed_data
 
+def load_result_settings(param):
+    glo = param['result_settings']
+    global angle_to_normal, hit_coordinates
+    if 'angle_to_normal' in glo.keys():
+        angle_to_normal = glo['angle_to_normal']
+    if 'hit_coordinates' in glo.keys():
+        hit_coordinates = glo['hit_coordinates']
+
 def load_display(param):
     glo = param['display_settings']
     global lens_display_theta, lens_display_phi, \
         ray_display_density, obj_display_density, \
-        fill_with_grey, show_grid, density_for_intensity
+        fill_with_grey, show_grid, density_for_intensity, \
+        show_plot, coexist
+    if 'show_plot' in glo.keys():
+        show_plot = glo['show_plot']
+    if 'coexist' in glo.keys():
+        coexist = glo['coexist']
+        if coexist is False:
+            plt.close('all')
     if 'figsize' in glo.keys():
         plt.rcParams['figure.figsize'] = tuple(glo['figsize'])
     if 'theme' in glo.keys():
@@ -1255,6 +1280,18 @@ def simple_ray_tracer_main(parameters):
         fig.canvas.manager.window.wm_geometry("+%d+%d"%(10,10))
     plt.show()
 
+def smooth_line(raw,noe):
+    if isinstance(raw,str):
+        for i in range(noe-1):
+            raw=raw+","
+        return raw
+    elif isinstance(raw,list):
+        line =""
+        for i in range(noe):
+            if i<len(raw):
+                line=line+raw[i]
+            line=line+","
+        return line
 def simple_ray_tracer_main_w_analysis(parameters):
     folder="SRT_result"
     if folder in os.listdir():
@@ -1262,6 +1299,10 @@ def simple_ray_tracer_main_w_analysis(parameters):
             os.remove(folder+"/"+item)
     else:
         os.mkdir(folder)
+    if 'result_settings' in parameters.keys():
+        load_result_settings(parameters)
+    if 'display_settings' in parameters.keys():
+        load_display(parameters)
     plt.style.use('default')
     trains = load_paths(parameters)
     plotted_surfaces=[]
@@ -1270,10 +1311,22 @@ def simple_ray_tracer_main_w_analysis(parameters):
         for j,s in enumerate(t.surfaces):
             if not s in plotted_surfaces:
                 plotted_surfaces.append(s)
+    columns=['id','v1','v2','v3','c1','c2','c3','ang2normal','wv','intensity']
+    lines=[]
+    lines.append(smooth_line(columns,len(columns))+"\n")
     for s in plotted_surfaces:
-        fig,ax=plt.subplots()
+        section = s.shape+"  "+s.mode+"  "+str(s.sid)
+        lines.append(smooth_line(section,len(columns))+"\n")
         base = s.base[:,1:]
-        if s.shape=="spherical":
+        disk = False
+        if s.shape == "spherical":
+            disk = True
+        if s.shape == "plano":
+            if isinstance(s.semidia, float) and s.semidia == 1:
+                disk = False
+            else:
+                disk = True
+        if disk is True:
             xs=[]
             ys=[]
             for theta in range(0,360,10):
@@ -1283,39 +1336,67 @@ def simple_ray_tracer_main_w_analysis(parameters):
         rhr = np.radians(s.dial)
         rtm = np.array([[np.cos(rhr),-np.sin(rhr)],[np.sin(rhr),np.cos(rhr)]])
         base = np.dot(base, rtm)
-        ax.fill(base[:, 0], base[:, 1], color='k', alpha=0.1)
+        if show_plot is True:
+            fig,ax=plt.subplots()
+            ax.fill(base[:, 0], base[:, 1], color='k', alpha=0.1)
 
         for k,stat in enumerate(s.intersects):
-            coord = stat[0]
-            reduc = coord[1:3]
+            abs_coord = stat[0]
+            rel_coord = xdot(s.move,abs_coord)
+            rel_coord[0] +=s.radius
+            reduc = rel_coord[1:3]
             reduc = np.dot(reduc,rtm)
             wv = stat[1]
             inten = stat[2]
-            vec = stat[3]
+            rel_vec = normalize(stat[3])
+            abs_vec = normalize(xdot(s.inverse,rel_vec)-xdot(s.inverse,np.zeros(3)))
+            ang = np.degrees(np.arccos(np.dot(-1*rel_vec,np.array([-1,0,0]))))#,np.dot(rel_vec,np.array([-1,0,0])))))
             c=(1,1,1)
+            info = str(k)+","
+
+            abs_vec = abs_vec.astype('str').tolist()
+            abs_vec = ','.join(abs_vec)+","
+            abs_coor = abs_coord.astype('str').tolist()
+            abs_coor = ','.join(abs_coor)+","
+
+            rel_vec = rel_vec.astype('str').tolist()
+            rel_vec = ','.join(rel_vec) + ","
+            rel_coor = rel_coord.astype('str').tolist()
+            rel_coor = ','.join(rel_coor) + ","
+
+            if hit_coordinates =='absolute':
+                info = info + abs_vec + abs_coor + str(ang) + "," + str(wv) + "," + str(inten)
+            else:
+                info = info + rel_vec + rel_coor + str(ang) + "," + str(wv) + "," + str(inten)
+
+            lines.append(info+"\n")
             if isinstance(wv,int):
                 if wv!=0:
                     c=wavelength2rgb(wv)
-            ax.scatter(reduc[0],reduc[1],color=c,marker='o',alpha=inten)
+            if show_plot is True:
+                ax.scatter(reduc[0],reduc[1],color=c,marker='o',alpha=inten)
 
-        ax.set_title("surface"+str(s.sid)+","+s.shape)
-        ylocs, lbls = plt.yticks()
-        interval = ylocs[1]-ylocs[0]
-        ax.set_yticks(ylocs)
-        lims = ax.get_xlim()
-        lefty = -np.arange(0,-lims[0],interval)
-        righty = np.arange(0,lims[1],interval)
-        xtic = np.concatenate([lefty,righty])
-        ax.set_xticks(xtic)
-        ax.xaxis.set_ticklabels([])
-        ax.grid(True)
-        plt.savefig(folder+"/s"+str(s.sid)+".png")
-        plt.close(fig)
-
+        if show_plot is True:
+            ax.set_title("surface"+str(s.sid)+","+s.shape)
+            ylocs, lbls = plt.yticks()
+            interval = ylocs[1] - ylocs[0]
+            ax.set_yticks(ylocs)
+            lims = ax.get_xlim()
+            lefty = -np.arange(0,-lims[0],interval)
+            righty = np.arange(0,lims[1],interval)
+            xtic = np.concatenate([lefty,righty])
+            ax.set_xticks(xtic)
+            ax.xaxis.set_ticklabels([])
+            ax.grid(True)
+            plt.savefig(folder+"/s"+str(s.sid)+".png")
+            plt.close(fig)
+        with open(folder+"/"+"ray_sur_interactions.csv",'w') as writer:
+            writer.writelines(lines)
     messagebox.showinfo("Info","Result is stored in SRT_result folder")
     plt.style.use('dark_background')
-    if 'display_settings' in parameters.keys():
-        load_display(parameters)
+
+    if show_plot is False:
+        return
     fig, ax = plt.subplots(subplot_kw={'projection': '3d'})
     for t in trains:
         t.render(ax)
@@ -1392,7 +1473,7 @@ def ota():
     data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
     global via_gui
     if via_gui is True:
-      cv.imwrite("rendering.jpg",cv.cvtColor(data,cv.COLOR_BGR2RGB))
+      #cv.imwrite("rendering.jpg",cv.cvtColor(data,cv.COLOR_BGR2RGB))
       fig.canvas.manager.window.wm_geometry("+%d+%d"%(10,10))
     plt.show()
 
