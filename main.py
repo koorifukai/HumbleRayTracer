@@ -8,13 +8,8 @@ from mpl_toolkits.mplot3d import Axes3D
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 #import cv2 as cv
 import os
-import math
+import copy
 import yaml
-
-# import scipy.stats as stats
-# import scipy.optimize as optimize
-# from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
-# from matplotlib.figure import Figure
 
 modes = ['inactive', 'refraction', 'reflection', 'partial', 'absorption',"diffuse","detector"]
 
@@ -27,10 +22,21 @@ fill_with_grey = False
 density_for_intensity=True
 show_plot = True
 coexist = True
+top_most = False
 #    fig, ax = plt.subplots(subplot_kw={'projection': '3d'})
 
 angle_to_normal = 'element' #choose between element and hit
 hit_coordinates = 'absolute' #choose between absolute and relative
+
+num_of_iterations = 0
+optimization_mode = "aberrations"
+optimization_param = None
+secret_variables = {'V1': [],
+                    'V2': [],
+                    'V3': []
+                    }
+optimization_attempted = False
+result_folder="SRT_result"
 
 def normalize(vec):
     scale = 1 / np.linalg.norm(vec[0:3])
@@ -194,7 +200,11 @@ def point_light(samples,divergence = np.pi):
     return points[0:samples,:]
 
 class ray:
-    def __init__(self, container, position=None, vector=None, wavelength=0):
+    def __init__(self, container, position=None, vector=None, wavelength=0, lid=-1):
+        self.mutable_params = {
+            'position': position.copy(),
+            'vector': vector.copy(),
+        }
         self.coord = np.zeros(3, np.float64)
         self.container = container
         self.vec = np.array([1, 0, 0], np.float64)
@@ -204,6 +214,7 @@ class ray:
         self.active_until = -1
         self.intensity = 1
         self.intensities=[[0,1]]
+        self.lid = lid
         if not position is None and not vector is None:
             self.coord = position
             self.vec[0:3] = vector[0:3]
@@ -213,8 +224,23 @@ class ray:
             self.color = (1,1,1)
         else:
             self.color = wavelength2rgb(self.wv)
-
         self.peer_dist=0
+
+    def reset(self):
+        orig = self.mutable_params
+        self.coord = np.zeros(3, np.float64)
+        self.vec = np.array([1, 0, 0], np.float64)
+        self.trace = []
+        self.active = True
+        self.active_since = 0
+        self.active_until = -1
+        self.intensity = 1
+        self.intensities = [[0, 1]]
+        if orig['position'] is not None and orig['vector'] is not None:
+            self.coord = orig['position']
+            self.vec[0:3] = orig['vector'][0:3]
+            self.trace.append(orig['position'])
+        self.peer_dist = 0
     def travel(self):
         points = np.asarray(self.trace)
         steps = np.diff(points, axis=0)
@@ -239,15 +265,21 @@ class surface:
                  dial=0, height=1, width=1,
                  mode="inactive", n1=1, n2=1, transmission=1,
                  color=None, alpha=obj_display_density):
+        self.mutable_params = {}
         if coord is None:
             coord = np.array([0,0,0])
+        else:
+            self.mutable_params['coord']=coord.copy()
         self.vertex = coord
         self.normal = np.array([-1, 0, 0], np.float64)
         self.dial = dial
         self.intersects=[]
         if not normal is None:
             self.normal = normalize(normal)
+            self.mutable_params['normal']=self.normal.copy()
         elif normal is None and not angles is None:
+            self.mutable_params['angles']=angles.copy()
+            self.mutable_params['normal']=None
             nor = ang2vec(angles)
             self.normal = normalize(nor)
 
@@ -256,6 +288,7 @@ class surface:
         self.disk = False
 
         self.radius = radius  # +( -)
+        self.mutable_params['radius']=radius
         self.semidia = semidia
         self.height=height
         self.width=width
@@ -279,7 +312,7 @@ class surface:
                 self.width = 1
         elif shape == "plano":
             self.radius = 0
-            if isinstance(semidia,float) and semidia==1: #which means the default param is not used, its a round mirror
+            if isinstance(semidia,float) and semidia==1: #which means the default param is not used, the surface is a disk
                 self.disk = False
                 self.height = height
                 self.width = width
@@ -319,6 +352,7 @@ class surface:
 
         self.going=None
         self.fan=0
+
     def copy(self,afresh = False):
         neu = surface(self.vertex.copy(),self.normal.copy(),self.shape)
         neu.dial = self.dial
@@ -487,9 +521,8 @@ def interact_vhnrs(v, h, n, r: ray, s: surface, forced=None):  # vector, hit, no
         r.vec = v
         r.trace.append(r_hit)
         #store ray stats
-        stat = [r_hit]
+        stat = [r_hit,v_rel_from]
         ray_sta = extract_ray_info(r)
-        ray_sta.append(v_rel_from)
         stat.extend(ray_sta)
         s.intersects.append(stat)
         return
@@ -502,15 +535,14 @@ def interact_vhnrs(v, h, n, r: ray, s: surface, forced=None):  # vector, hit, no
         r.vec = v
         r.trace.append(r_hit)
         #store ray stats
-        stat = [r_hit]
+        stat = [r_hit,v_rel_from]
         ray_sta = extract_ray_info(r)
-        ray_sta.append(v_rel_from)
         stat.extend(ray_sta)
         s.intersects.append(stat)
         return
     if s.mode == "partial" and forced is None:
         r_hit = xdot(s.inverse, h)
-        shadow = ray(None, r_hit - 1e-3 * r.vec, r.vec.copy(), r.wv)
+        shadow = ray(None, r_hit - 1e-3 * r.vec, r.vec.copy(), r.wv,lid=r.lid+0.1)
         aa=s.transmission
         bb=1-s.transmission
         if s.transmission > 0.5:
@@ -535,9 +567,8 @@ def interact_vhnrs(v, h, n, r: ray, s: surface, forced=None):  # vector, hit, no
         r_hit = xdot(s.inverse, h)
         r.trace.append(r_hit)
         #store ray stats
-        stat = [r_hit]
+        stat = [r_hit,v_rel_from]
         ray_sta = extract_ray_info(r)
-        ray_sta.append(v_rel_from)
         stat.extend(ray_sta)
         s.intersects.append(stat)
         r.active = False
@@ -552,14 +583,13 @@ def interact_vhnrs(v, h, n, r: ray, s: surface, forced=None):  # vector, hit, no
         r.vec=v
         r.trace.append(r_hit)
         #store ray stats
-        stat = [r_hit]
+        stat = [r_hit,v_rel_from]
         ray_sta = extract_ray_info(r)
-        ray_sta.append(v_rel_from)
         stat.extend(ray_sta)
         s.intersects.append(stat)
         return
 def extract_ray_info(incident:ray):
-    return [incident.wv,incident.intensity]
+    return [incident.wv,incident.intensity,incident.lid]
 def not_yet_lambertian_reflection(vec,rad):
     theta = np.random.rand()*2*np.pi
     phi=(np.random.rand()-0.5)*2*rad
@@ -851,7 +881,7 @@ def save_figure(fig):
 
 class light:
     def __init__(self, position, vector, number=6,wavelength=0):
-        self.lid=0
+        self.lid=-1
         self.rays = []
         self.position=position
         self.vector=normalize(vector)
@@ -872,7 +902,7 @@ class light:
         core[:, 0] = 0
         transformed = self.rotate(self.vector,core) + self.position
         for i in range(len(transformed)):
-            self.rays.append(ray(container=self.rays, position=transformed[i, :], vector=self.vector, wavelength=self.wavelength))
+            self.rays.append(ray(container=self.rays, position=transformed[i, :], vector=self.vector, wavelength=self.wavelength,lid=self.lid))
     def ring(self,r, whr=1, dial=0):
         self.birth = "ring"
         w=1
@@ -891,7 +921,7 @@ class light:
         core=np.dot(core,rhr)
         transformed = self.rotate(self.vector,core) + self.position
         for i in range(len(transformed)):
-            self.rays.append(ray(container=self.rays, position=transformed[i, :], vector=self.vector, wavelength=self.wavelength))
+            self.rays.append(ray(container=self.rays, position=transformed[i, :], vector=self.vector, wavelength=self.wavelength,lid=self.lid))
     def uniform(self,r):
         self.birth="uniform"
         # distribute n points into concentric rings
@@ -922,7 +952,7 @@ class light:
         transformed = self.rotate(self.vector, core) + self.position
         for i in range(len(transformed)):
             self.rays.append(
-                ray(container=self.rays, position=transformed[i, :], vector=self.vector, wavelength=self.wavelength))
+                ray(container=self.rays, position=transformed[i, :], vector=self.vector, wavelength=self.wavelength,lid=self.lid))
 
     def point(self,divergence=0):
         self.birth = "point"
@@ -932,7 +962,7 @@ class light:
             r = rot_transform(np.array([1,0,0]),self.vector)
             transformed = np.dot(r,core.transpose()).transpose()
             for i in range(len(transformed)):
-                self.rays.append(ray(container=self.rays, position=self.position, vector=transformed[i,:], wavelength=self.wavelength))
+                self.rays.append(ray(container=self.rays, position=self.position, vector=transformed[i,:], wavelength=self.wavelength,lid=self.lid))
 
     def rotate(self, vector, plotted):
         rot = rot_transform(np.array([1, 0, 0]), vector)
@@ -950,7 +980,6 @@ class train:
         self.show_surfaces = show_surfaces
         self.extremes = np.zeros((3, 2))
         self.longest = 0
-
     def set_light(self, source: light):
         self.light = source
         self.rays = source.rays
@@ -977,7 +1006,6 @@ class train:
     def plot_rays(self, ax: Axes3D):
         for r in self.rays:
             plot_ray(ax, r)
-
     def organize(self):
         if self.light.birth=="point" and self.light.divergence==0:
             first = self.surfaces[0]
@@ -1026,6 +1054,11 @@ class train:
             self.longest = max(self.longest, r.travel())
         for r in self.rays:
             r.peer_dist = self.longest
+    def clear_results(self):
+        for r in self.rays:
+            r.reset()
+        for s in self.surfaces:
+            s.intersects=[]
     def render(self, ax):
         self.plot_rays(ax)
         if self.show_surfaces is True:
@@ -1035,7 +1068,6 @@ class train:
     def translate(self, shift):
         for s in self.surfaces:
             s.translate(shift)
-
 def parse_yaml_file(file_path):
     with open(file_path, 'r') as yaml_file:
         parsed_data = yaml.load(yaml_file, Loader=yaml.FullLoader)
@@ -1048,13 +1080,21 @@ def load_result_settings(param):
         angle_to_normal = glo['angle_to_normal']
     if 'hit_coordinates' in glo.keys():
         hit_coordinates = glo['hit_coordinates']
-
+def load_optimization_settings(param):
+    glo = param['optimization_settings']
+    global optimization_mode,optimization_param,num_of_iterations
+    if 'mode' in glo.keys():
+        optimization_mode = glo['mode']
+    if "param" in glo.keys():
+        optimization_param = glo['param']
+    if "iterations" in glo.keys():
+        num_of_iterations = glo['iterations']
 def load_display(param):
     glo = param['display_settings']
     global lens_display_theta, lens_display_phi, \
         ray_display_density, obj_display_density, \
         fill_with_grey, show_grid, density_for_intensity, \
-        show_plot, coexist
+        show_plot, coexist, top_most
     if 'show_plot' in glo.keys():
         show_plot = glo['show_plot']
     if 'coexist' in glo.keys():
@@ -1080,13 +1120,13 @@ def load_display(param):
     if 'density_for_intensity' in glo.keys():
         density_for_intensity = glo['density_for_intensity']
         ray_display_density= 1
-
+    if 'top_most' in glo.keys():
+        top_most = glo['top_most']
 def list2vec(unknown):
     out = np.zeros(len(unknown))
     for i in range(len(unknown)):
         out[i]=float(unknown[i])
     return out
-
 def load_lights(param):
     raw_lights = param
     lights = []
@@ -1221,8 +1261,6 @@ def load_paths(param):
     assemblies = load_assemblies(param['assemblies'])
     lights = load_lights(param['light_sources'])
     used_sid=[]
-    existing_surfaces=[]
-    used_aid=[]
 
     masterplan = param['optical_trains']
     paths=[]
@@ -1268,6 +1306,11 @@ def load_paths(param):
 def simple_ray_tracer_main(parameters):
     if 'display_settings' in parameters.keys():
         load_display(parameters)
+    if 'optimization_settings' in parameters.keys():
+        if replace_tag_in_dict(parameters,"V1","V1") or \
+                replace_tag_in_dict(parameters,"V2","V2") or \
+                replace_tag_in_dict(parameters,"V3","V3"):
+            messagebox.showinfo("Warning","Optimization variables must not be in the optical train in this mode")
     trains = load_paths(parameters)
     fig, ax = plt.subplots(subplot_kw={'projection': '3d'})
     for t in trains:
@@ -1292,18 +1335,48 @@ def smooth_line(raw,noe):
                 line=line+raw[i]
             line=line+","
         return line
+def replace_tag_in_list(l,tag,val):
+    replaced = False
+    for i,item in enumerate(l):
+        if isinstance(item, dict):
+            if replace_tag_in_dict(item, tag, val):
+                replaced = True
+        elif isinstance(item, list):
+            if replace_tag_in_list(item,tag,val):
+                replaced = True
+        else:
+            if item == tag:
+                l[i]=val
+                replaced = True
+    return replaced
+def replace_tag_in_dict(d, tag, val):
+    replaced = False
+    for key, value in d.items():
+        if isinstance(value,dict):
+            if replace_tag_in_dict(value, tag, val):
+                replaced = True
+        elif isinstance(value,list):
+            if replace_tag_in_list(value,tag,val):
+                replaced = True
+        else:
+            if value==tag:
+                d[key]=val
+                replaced = True
+    return replaced
+
 def simple_ray_tracer_main_w_analysis(parameters):
-    folder="SRT_result"
-    if folder in os.listdir():
-        for item in os.listdir(folder):
-            os.remove(folder+"/"+item)
+    if result_folder in os.listdir():
+        for item in os.listdir(result_folder):
+            os.remove(result_folder+"/"+item)
     else:
-        os.mkdir(folder)
+        os.mkdir(result_folder)
     if 'result_settings' in parameters.keys():
         load_result_settings(parameters)
     if 'display_settings' in parameters.keys():
         load_display(parameters)
-    plt.style.use('default')
+    if 'optimization_settings' in parameters.keys():
+        optimized_param=run_PSO(parameters)
+        parameters = optimized_param
     trains = load_paths(parameters)
     plotted_surfaces=[]
     for i,t in enumerate(trains):
@@ -1311,7 +1384,9 @@ def simple_ray_tracer_main_w_analysis(parameters):
         for j,s in enumerate(t.surfaces):
             if not s in plotted_surfaces:
                 plotted_surfaces.append(s)
-    columns=['id','v1','v2','v3','c1','c2','c3','ang2normal','wv','intensity']
+    #imakoko
+
+    columns=['id','v1','v2','v3','c1','c2','c3','ang2normal','wv','intensity','lid']
     lines=[]
     lines.append(smooth_line(columns,len(columns))+"\n")
     for s in plotted_surfaces:
@@ -1338,7 +1413,7 @@ def simple_ray_tracer_main_w_analysis(parameters):
         base = np.dot(base, rtm)
         if show_plot is True:
             fig,ax=plt.subplots()
-            ax.fill(base[:, 0], base[:, 1], color='k', alpha=0.1)
+            ax.fill(base[:, 0], base[:, 1], color=(0.5,0.5,0.5))
 
         for k,stat in enumerate(s.intersects):
             abs_coord = stat[0]
@@ -1346,11 +1421,15 @@ def simple_ray_tracer_main_w_analysis(parameters):
             rel_coord[0] +=s.radius
             reduc = rel_coord[1:3]
             reduc = np.dot(reduc,rtm)
-            wv = stat[1]
-            inten = stat[2]
-            rel_vec = normalize(stat[3])
-            abs_vec = normalize(xdot(s.inverse,rel_vec)-xdot(s.inverse,np.zeros(3)))
-            ang = np.degrees(np.arccos(np.dot(-1*rel_vec,np.array([-1,0,0]))))#,np.dot(rel_vec,np.array([-1,0,0])))))
+
+            rel_vec = normalize(stat[1])
+            abs_vec = normalize(xdot(s.inverse, rel_vec) - xdot(s.inverse, np.zeros(3)))
+            ang = np.degrees(
+                np.arccos(np.dot(-1 * rel_vec, np.array([-1, 0, 0]))))  # ,np.dot(rel_vec,np.array([-1,0,0])))))
+
+            wv = stat[2]
+            inten = stat[3]
+            lid = stat[4]
             c=(1,1,1)
             info = str(k)+","
 
@@ -1365,9 +1444,9 @@ def simple_ray_tracer_main_w_analysis(parameters):
             rel_coor = ','.join(rel_coor) + ","
 
             if hit_coordinates =='absolute':
-                info = info + abs_vec + abs_coor + str(ang) + "," + str(wv) + "," + str(inten)
+                info = info + abs_vec + abs_coor + str(ang) + "," + str(wv) + "," + str(inten)+ "," +str(lid)
             else:
-                info = info + rel_vec + rel_coor + str(ang) + "," + str(wv) + "," + str(inten)
+                info = info + rel_vec + rel_coor + str(ang) + "," + str(wv) + "," + str(inten)+ "," +str(lid)
 
             lines.append(info+"\n")
             if isinstance(wv,int):
@@ -1388,11 +1467,10 @@ def simple_ray_tracer_main_w_analysis(parameters):
             ax.set_xticks(xtic)
             ax.xaxis.set_ticklabels([])
             ax.grid(True)
-            plt.savefig(folder+"/s"+str(s.sid)+".png")
+            plt.savefig(result_folder+"/s"+str(s.sid)+".png")
             plt.close(fig)
-        with open(folder+"/"+"ray_sur_interactions.csv",'w') as writer:
-            writer.writelines(lines)
-    messagebox.showinfo("Info","Result is stored in SRT_result folder")
+        with open(result_folder+"/"+"ray_sur_interactions.csv",'w') as writer:
+             writer.writelines(lines)
     plt.style.use('dark_background')
 
     if show_plot is False:
@@ -1406,7 +1484,222 @@ def simple_ray_tracer_main_w_analysis(parameters):
     if via_gui is True:
         fig.canvas.manager.window.wm_geometry("+%d+%d"%(10,10))
     plt.show()
+def test_current_config(param,candidates:dict,optim_settings:dict):
+    if "V1" in candidates.keys():
+        replace_tag_in_dict(param, "V1", candidates['V1'])
+    if "V2" in candidates.keys():
+        replace_tag_in_dict(param, "V2", candidates['V2'])
+    if "V3" in candidates.keys():
+        replace_tag_in_dict(param, "V3", candidates['V3'])
+    t = load_paths(param)[0]
+    t.propagate()
+    loss= loss_function(t.surfaces[optim_settings['obj']],optim_settings['mode'],optim_settings['param'])
+    return loss
+def run_current_config(parameters,ks,vs,optim_settings:dict):
+    param=copy.deepcopy(parameters)
+    for i in range(len(ks)):
+        ret = replace_tag_in_dict(param,ks[i],vs[i])
+    t = load_paths(param)[0]
+    t.propagate()
+    loss = loss_function(t.surfaces[optim_settings['obj']], optim_settings['mode'], optim_settings['param'])
+    return loss,param
 
+def loss_function(sur: surface, metric="aberrations", params=None):
+    #metrics:
+    #aberrations: how focused are rays
+    #angle: applies to collimated light
+    #params: the expected angle between rays and the surface normal
+    sources={}
+    for hit in sur.intersects:
+        world_coord= hit[0]
+        coord = xdot(sur.move,world_coord)
+        vec = hit[1]
+        lid= hit[4]
+        if not lid in sources.keys():
+            sources[lid]=[]
+        sources[lid].append(np.concatenate([coord,vec]))
+    loss = 0
+    if metric == "aberrations":
+        for lid in sources.keys():
+            val = np.asarray(sources[lid])
+            coords = val[:,0:3]
+            vecs = val[:,3:6]
+            centroid = np.mean(coords,axis=0)
+            disp = coords-centroid.reshape((1,-1)).repeat(len(val),0)
+            disp = np.square(disp)
+            disp = np.sum(np.sqrt(np.sum(disp,axis=1)))
+            loss+=disp
+    elif metric == "angle":
+        target_ang = 0
+        if not params is None:
+            if isinstance(params,int) or isinstance(params,float):
+                target_ang=float(params)
+        for lid in sources.keys():
+            val = np.asarray(sources[lid])
+            coords = val[:,0:3]
+            vecs = -1*val[:,3:6]
+            nor = np.array([-1,0,0])
+            dot = np.dot(vecs,nor)
+            ang = np.degrees(np.arccos(dot))
+            deviation = np.abs(ang-target_ang)
+            loss +=np.mean(deviation)
+    return loss
+class normalizer:
+    def __init__(self,policy:dict):
+        self.lows=[]
+        self.highs=[]
+        self.scales=[]
+        if "V1" in policy.keys():
+            v = policy["V1"][0:2]
+            self.lows.append(v[0])
+            self.highs.append(v[1])
+            self.scales.append(v[1] - v[0])
+        if "V2" in policy.keys():
+            v = policy["V2"][0:2]
+            self.lows.append(v[0])
+            self.highs.append(v[1])
+            self.scales.append(v[1] - v[0])
+        if "V3" in policy.keys():
+            v = policy["V3"][0:2]
+            self.lows.append(v[0])
+            self.highs.append(v[1])
+            self.scales.append(v[1] - v[0])
+        self.lows= np.asarray(self.lows)
+        self.highs=np.asarray(self.highs)
+        self.scales=np.asarray(self.scales)
+    def recover(self,vals):
+        if isinstance(vals,list):
+            out = []
+            for i in range(len(vals)):
+                out.append(vals[i]*self.scales[i]+self.lows[i])
+            return out
+        else:
+            out = vals*self.scales+self.lows
+            return out
+    def convert(self,vals):
+        if isinstance(vals, list):
+            out = []
+            for i in range(len(vals)):
+                out.append(vals[i] - self.lows[i])
+                out[-1]/=self.scales[i]
+            return out
+        else:
+            out = vals-self.lows
+            return self.scales*out
+def run_PSO(parameters):
+    param = copy.deepcopy(parameters)
+    load_optimization_settings(param)
+    policy = parameters['optimization_settings']
+    target = {}
+    if "V1" in policy.keys():
+        if replace_tag_in_dict(param, "V1", "V1"):
+            target['V1'] = policy['V1']
+    if "V2" in policy.keys():
+        if replace_tag_in_dict(param, "V2", "V2"):
+            target['V2'] = policy['V2']
+    if "V3" in policy.keys():
+        if replace_tag_in_dict(param, "V3", "V3"):
+            target['V3'] = policy['V3']
+    if len(target)==0:
+        return param
+    nor = normalizer(policy)
+    particles = []
+    velocities=[]
+
+    performances=[]
+    loci=[]
+    c1 = 1.5  # Cognitive parameter
+    c2 = 1.5  # Social parameter
+    w = 0.5  # Inertia weight
+    num_iterations = policy['iterations']
+    for d in target.keys():
+        arr=np.linspace(0,1,target[d][2])
+        target[d]=np.float64(arr)
+    if len(target) == 1:
+        for v1 in list(target.values())[0]:
+            particles.append(np.array([v1]))
+            velocities.append(0.5*(np.random.rand()-0.5))
+    elif len(target) == 2:
+        for v1 in list(target.values())[0]:
+            for v2 in list(target.values())[1]:
+                particles.append(np.array([v1, v2]))
+                velocities.append(0.5*(np.random.rand(2)-0.5))
+    elif len(target) == 3:
+        for v1 in list(target.values())[0]:
+            for v2 in list(target.values())[1]:
+                for v3 in list(target.values())[2]:
+                    particles.append(np.array([v1, v2, v3]))
+                    velocities.append(0.5*(np.random.rand(3)-0.5))
+
+    if num_iterations*len(particles)>1000:
+        messagebox.showinfo("Warning","Current setup runs raytracing more than 1000 times")
+    keys = list(target.keys())
+    num_particles = len(particles)
+    best_positions = particles.copy()
+    best_fitness = []
+    for p in particles:
+        rec = nor.recover(p)
+        loss,attempt = run_current_config(param,keys,rec,policy)
+        best_fitness.append(loss)
+        performances.append([])
+        loci.append([])
+    global_best_index = np.argmin(best_fitness)
+    global_best_position = particles[global_best_index].copy()
+    history = []
+    for iteration in range(num_iterations):
+        for i in range(num_particles):
+            velocity = w * velocities[i] + c1 * np.random.rand() * (
+                    best_positions[i] - particles[i]) + c2 * np.random.rand() * (
+                               global_best_position - particles[i])
+            velocities[i]=velocity
+            particles[i] = particles[i] + velocity
+            loci[i].append(particles[i][0])
+            current_fitness,attempt = run_current_config(param,keys,nor.recover(particles[i]),policy)
+            if current_fitness < best_fitness[i]:
+                best_fitness[i] = current_fitness
+                best_positions[i] = particles[i].copy()
+                if current_fitness < best_fitness[global_best_index]:
+                    global_best_index = i
+                    global_best_position = particles[i].copy()
+            performances[i].append(best_fitness[i])
+        history.append(best_fitness[global_best_index])
+    recovered_best_params=nor.recover(global_best_position)
+    optim_result = {}
+    str_res=[]
+    info = ""
+    for i,d in enumerate(target.keys()):
+        replace_tag_in_dict(parameters,d,recovered_best_params[i])
+        replace_tag_in_dict(policy,d,recovered_best_params[i])
+        optim_result[d]=recovered_best_params[i]
+        str_res.append(str(recovered_best_params[i])[0:6])
+        info = info+str(d)+"= "+str(recovered_best_params[i])[0:6]+"\n"
+    loss = np.min(np.asarray(best_fitness))
+    info = info+"loss= "+str(loss)[0:6]
+
+    lines=[]
+    lines.append("Optimization results")
+    lines.append("Varibles: " + "&".join(list(target.keys())))
+    lines.append("Best: " + "&".join(str_res))
+    lines.append("Loss: " + str(loss))
+    lines.append("Trace")
+
+    performances = np.asarray(performances)
+    best = np.asarray(history).reshape((1,-1))
+    sta = np.concatenate([performances,best],axis=0)
+    sta = sta.astype('str')
+    columns=[]
+    for i in range(len(particles)):
+        columns.append("P"+str(i))
+    columns.append("best")
+
+    with open(result_folder + "/" + "optim_progress.csv", 'w') as writer:
+        for l in lines:
+            writer.writelines(l+"\n")
+        #writer.writelines(",".join(columns)+"\n")
+        #for l in range(sta.shape[0]):
+        #    writer.writelines(",".join(sta[i].tolist())+"\n")
+    messagebox.showinfo("Optimization parameters",info)
+    return parameters
 def ota():
     fig, ax = plt.subplots(subplot_kw={'projection': '3d'})
     red = light(np.array([0, 0, -3]), normalize(np.array([1, 0, 0.1])), number=5,wavelength = 633)
@@ -1522,6 +1815,7 @@ def run_gui():
         try:
             instruction = parse_yaml_file(parameters['path'])
             simple_ray_tracer_main_w_analysis(instruction)
+            messagebox.showinfo("Info","Result is stored in SRT_result folder")
         except Exception as e:
             messagebox.showerror("error", str(e))
             return None
@@ -1547,6 +1841,7 @@ def run_gui():
     x = (ws / 2) - (w / 2)
     y = (hs / 2) - (h / 2)
     root.geometry('+%d+%d' % (x, y))
+    root.attributes('-topmost',top_most)
     root.mainloop()
     try:
         root.destroy()
