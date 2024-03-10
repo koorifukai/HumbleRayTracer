@@ -11,7 +11,7 @@ import os
 import copy
 import yaml
 
-modes = ['inactive', 'refraction', 'reflection', 'partial', 'absorption',"diffuse","detector"]
+modes = ['inactive', 'refraction', 'reflection', 'partial', 'absorption', 'diffuse', 'aperture']
 
 lens_display_theta=10    #theta= longitudinal resolution
 lens_display_phi=20      #phi= circular resolution
@@ -31,12 +31,10 @@ hit_coordinates = 'absolute' #choose between absolute and relative
 num_of_iterations = 0
 optimization_mode = "aberrations"
 optimization_param = None
-secret_variables = {'V1': [],
-                    'V2': [],
-                    'V3': []
-                    }
-optimization_attempted = False
+
 result_folder="SRT_result"
+already_shown=[False,False]
+last_path = "default.yml"
 
 def normalize(vec):
     scale = 1 / np.linalg.norm(vec[0:3])
@@ -312,7 +310,7 @@ class surface:
                 self.width = 1
         elif shape == "plano":
             self.radius = 0
-            if isinstance(semidia,float) and semidia==1: #which means the default param is not used, the surface is a disk
+            if isinstance(semidia,float) and semidia==1: #which means default param is not used, surface is a disk
                 self.disk = False
                 self.height = height
                 self.width = width
@@ -588,6 +586,9 @@ def interact_vhnrs(v, h, n, r: ray, s: surface, forced=None):  # vector, hit, no
         stat.extend(ray_sta)
         s.intersects.append(stat)
         return
+    if s.mode == "aperture":
+        interact_vhnrs(v, h, n, r, s, forced="refraction")
+        return
 def extract_ray_info(incident:ray):
     return [incident.wv,incident.intensity,incident.lid]
 def not_yet_lambertian_reflection(vec,rad):
@@ -687,13 +688,22 @@ def interact_plane(incident: ray, sur: surface):
         return
     hit = t_last - t_last[0] / v[0] * v
     f = hit[1:3]
+    outsider = False
     if sur.disk is False:
         validate = simple_convex_hull(sur.base[:, 1:3], f)
         if validate == 0:
-            return
+            outsider = True
     else:
         if np.linalg.norm(f)>sur.semidia:
-            return
+            outsider = True
+    if outsider is True:
+        if sur.mode == "aperture":
+            interact_vhnrs(v, hit, n, incident, sur)
+            rec = xdot(sur.inverse,hit)
+            incident.trace.append(rec)
+            incident.active_until = sur.sid
+            incident.active = False
+        return
     interact_vhnrs(v, hit, n, incident, sur)
 
 def lens_vertices(radius, semidia):
@@ -801,7 +811,13 @@ def plot_surface(ax: Axes3D, sur: surface, normal=False):
             coords = cylindrical_coords(sur)
         else:
             coords = spherical_coords(sur)
-    ax.add_collection3d(Poly3DCollection(coords, facecolor=sur.color, alpha=sur.alpha))
+    if sur.mode == "aperture":
+        if sur.radius == 0 and sur.disk is False:
+            coords[0].append(coords[0][0])
+        coords = np.asarray(coords)[0]
+        ax.plot(coords[:,0],coords[:,1],coords[:,2],color='k')
+    else:
+        ax.add_collection3d(Poly3DCollection(coords, facecolor=sur.color, alpha=sur.alpha))
     if normal is True:
         ver = sur.vertex
         nor = sur.normal * 0.1 * max(sur.semidia,(max(sur.height,sur.width)))
@@ -1309,7 +1325,8 @@ def simple_ray_tracer_main(parameters):
     if 'optimization_settings' in parameters.keys():
         if replace_tag_in_dict(parameters,"V1","V1") or \
                 replace_tag_in_dict(parameters,"V2","V2") or \
-                replace_tag_in_dict(parameters,"V3","V3"):
+                replace_tag_in_dict(parameters,"V3","V3") or \
+                replace_tag_in_dict(parameters,"V4","V4"):
             messagebox.showinfo("Warning","Optimization variables must not be in the optical train in this mode")
     trains = load_paths(parameters)
     fig, ax = plt.subplots(subplot_kw={'projection': '3d'})
@@ -1491,6 +1508,8 @@ def test_current_config(param,candidates:dict,optim_settings:dict):
         replace_tag_in_dict(param, "V2", candidates['V2'])
     if "V3" in candidates.keys():
         replace_tag_in_dict(param, "V3", candidates['V3'])
+    if "V4" in candidates.keys():
+        replace_tag_in_dict(param, "V4", candidates['V4'])
     t = load_paths(param)[0]
     t.propagate()
     loss= loss_function(t.surfaces[optim_settings['obj']],optim_settings['mode'],optim_settings['param'])
@@ -1504,11 +1523,13 @@ def run_current_config(parameters,ks,vs,optim_settings:dict):
     loss = loss_function(t.surfaces[optim_settings['obj']], optim_settings['mode'], optim_settings['param'])
     return loss,param
 
-def loss_function(sur: surface, metric="aberrations", params=None):
+def loss_function(sur: surface, metric="aberrations", params=None,as_it_is = False):
     #metrics:
     #aberrations: how focused are rays
     #angle: applies to collimated light
-    #params: the expected angle between rays and the surface normal
+    #params: list of optional param:
+    #        1. the expected angle between rays and the surface normal
+    #        2. whether to include distance to center in loss
     sources={}
     for hit in sur.intersects:
         world_coord= hit[0]
@@ -1518,8 +1539,13 @@ def loss_function(sur: surface, metric="aberrations", params=None):
         if not lid in sources.keys():
             sources[lid]=[]
         sources[lid].append(np.concatenate([coord,vec]))
-    loss = 0
+    loss = 1000
+    denominator = 1
     if metric == "aberrations":
+        dist2ctr = False
+        if not params is None:
+            if params[1] is True:
+                dist2ctr = True
         for lid in sources.keys():
             val = np.asarray(sources[lid])
             coords = val[:,0:3]
@@ -1529,11 +1555,18 @@ def loss_function(sur: surface, metric="aberrations", params=None):
             disp = np.square(disp)
             disp = np.sum(np.sqrt(np.sum(disp,axis=1)))
             loss+=disp
+            if dist2ctr is True:
+                spreading = xdot(sur.move, coords)
+                loss +=np.mean(np.abs(spreading))
+            denominator+=len(val)
     elif metric == "angle":
         target_ang = 0
+        dist2ctr = False
         if not params is None:
-            if isinstance(params,int) or isinstance(params,float):
+            if isinstance(params[0],int) or isinstance(params[0],float):
                 target_ang=float(params)
+            if params[1] is True:
+                dist2ctr = True
         for lid in sources.keys():
             val = np.asarray(sources[lid])
             coords = val[:,0:3]
@@ -1543,7 +1576,13 @@ def loss_function(sur: surface, metric="aberrations", params=None):
             ang = np.degrees(np.arccos(dot))
             deviation = np.abs(ang-target_ang)
             loss +=np.mean(deviation)
-    return loss
+            if dist2ctr is True:
+                spreading = xdot(sur.move, coords)
+                loss +=np.mean(np.abs(spreading))
+            denominator+=len(val)
+    if as_it_is is True:
+        return loss-1000
+    return loss/denominator
 class normalizer:
     def __init__(self,policy:dict):
         self.lows=[]
@@ -1561,6 +1600,11 @@ class normalizer:
             self.scales.append(v[1] - v[0])
         if "V3" in policy.keys():
             v = policy["V3"][0:2]
+            self.lows.append(v[0])
+            self.highs.append(v[1])
+            self.scales.append(v[1] - v[0])
+        if "V4" in policy.keys():
+            v = policy["V4"][0:2]
             self.lows.append(v[0])
             self.highs.append(v[1])
             self.scales.append(v[1] - v[0])
@@ -1600,6 +1644,9 @@ def run_PSO(parameters):
     if "V3" in policy.keys():
         if replace_tag_in_dict(param, "V3", "V3"):
             target['V3'] = policy['V3']
+    if "V4" in policy.keys():
+        if replace_tag_in_dict(param, "V4", "V4"):
+            target['V4'] = policy['V4']
     if len(target)==0:
         return param
     nor = normalizer(policy)
@@ -1630,9 +1677,24 @@ def run_PSO(parameters):
                 for v3 in list(target.values())[2]:
                     particles.append(np.array([v1, v2, v3]))
                     velocities.append(0.5*(np.random.rand(3)-0.5))
+    elif len(target) == 4:
+        for v1 in list(target.values())[0]:
+            for v2 in list(target.values())[1]:
+                for v3 in list(target.values())[2]:
+                    for v4 in list(target.values())[3]:
+                        particles.append(np.array([v1, v2, v3, v4]))
+                        velocities.append(0.5*(np.random.rand(4)-0.5))
 
     if num_iterations*len(particles)>1000:
-        messagebox.showinfo("Warning","Current setup runs raytracing more than 1000 times")
+        if already_shown[1] is False:
+            ret = messagebox.askyesno("Warning","Current setup runs raytracing more than 1000 times\nDo you wish to proceed?")
+            if ret:
+                already_shown[1]=True
+            else:
+                messagebox.showinfo("Exit","Optimization cancelled")
+                for i, d in enumerate(target.keys()):
+                    replace_tag_in_dict(parameters, d, 0)
+                return
     keys = list(target.keys())
     num_particles = len(particles)
     best_positions = particles.copy()
@@ -1673,7 +1735,10 @@ def run_PSO(parameters):
         optim_result[d]=recovered_best_params[i]
         str_res.append(str(recovered_best_params[i])[0:6])
         info = info+str(d)+"= "+str(recovered_best_params[i])[0:6]+"\n"
-    loss = np.min(np.asarray(best_fitness))
+
+    t = load_paths(parameters)[0]
+    t.propagate()
+    loss = loss_function(t.surfaces[policy['obj']], policy['mode'], policy['param'], as_it_is=True)
     info = info+"loss= "+str(loss)[0:6]
 
     lines=[]
@@ -1775,6 +1840,7 @@ import tkinter as tk
 from tkinter import filedialog,messagebox
 
 def run_gui():
+    global last_path
     root = tk.Tk()
     root.title("SRT")
 
@@ -1784,7 +1850,10 @@ def run_gui():
     file_path_frame = tk.Frame(root)
     file_path_entry = tk.Entry(file_path_frame)
     file_path_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-    file_path_entry.insert(0, "default.yml")
+    current_path = "default.yml"
+    if os.path.exists(last_path):
+        current_path = last_path
+    file_path_entry.insert(0, str(current_path))
 
     def browse_files():
         file_path = filedialog.askopenfilename(initialdir="")
@@ -1815,7 +1884,9 @@ def run_gui():
         try:
             instruction = parse_yaml_file(parameters['path'])
             simple_ray_tracer_main_w_analysis(instruction)
-            messagebox.showinfo("Info","Result is stored in SRT_result folder")
+            if already_shown[0] is False:
+                messagebox.showinfo("Info","Result is stored in SRT_result folder")
+                already_shown[0]=True
         except Exception as e:
             messagebox.showerror("error", str(e))
             return None
@@ -1843,6 +1914,7 @@ def run_gui():
     root.geometry('+%d+%d' % (x, y))
     root.attributes('-topmost',top_most)
     root.mainloop()
+    last_path = parameters["path"]
     try:
         root.destroy()
     except:
