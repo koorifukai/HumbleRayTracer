@@ -6,10 +6,14 @@ plt.style.use('dark_background')
 plt.rcParams["font.size"] = 15
 from mpl_toolkits.mplot3d import Axes3D
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
 #import cv2 as cv
 import os
 import copy
 import yaml
+
+import tkinter as tk
+from tkinter import filedialog,messagebox
 
 modes = ['inactive', 'refraction', 'reflection', 'partial', 'absorption', 'diffuse', 'aperture']
 
@@ -1708,6 +1712,7 @@ def run_PSO(parameters):
     global_best_index = np.argmin(best_fitness)
     global_best_position = particles[global_best_index].copy()
     history = []
+    best_trace_score=[]
     for iteration in range(num_iterations):
         for i in range(num_particles):
             velocity = w * velocities[i] + c1 * np.random.rand() * (
@@ -1725,6 +1730,7 @@ def run_PSO(parameters):
                     global_best_position = particles[i].copy()
             performances[i].append(best_fitness[i])
         history.append(best_fitness[global_best_index])
+        best_trace_score.append([particles[global_best_index].copy(),best_fitness[global_best_index]])
     recovered_best_params=nor.recover(global_best_position)
     optim_result = {}
     str_res=[]
@@ -1743,10 +1749,15 @@ def run_PSO(parameters):
 
     lines=[]
     lines.append("Optimization results")
-    lines.append("Varibles: " + "&".join(list(target.keys())))
+    lines.append("Variables: " + "&".join(list(target.keys())))
     lines.append("Best: " + "&".join(str_res))
     lines.append("Loss: " + str(loss))
-    lines.append("Trace")
+    lines.append("Iteration,"+",".join(list(target.keys()))+",loss")
+    for i in range(num_of_iterations):
+        cand = best_trace_score[i]
+        loss = cand[1]
+        cand = nor.recover(cand[0])
+        lines.append(str(i)+","+",".join(list(np.array(cand).astype('str')))+","+str(loss))
 
     performances = np.asarray(performances)
     best = np.asarray(history).reshape((1,-1))
@@ -1834,10 +1845,6 @@ def ota():
       #cv.imwrite("rendering.jpg",cv.cvtColor(data,cv.COLOR_BGR2RGB))
       fig.canvas.manager.window.wm_geometry("+%d+%d"%(10,10))
     plt.show()
-
-#GUI
-import tkinter as tk
-from tkinter import filedialog,messagebox
 
 def run_gui():
     global last_path
