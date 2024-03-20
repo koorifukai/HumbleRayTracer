@@ -7,7 +7,8 @@ plt.rcParams["font.size"] = 15
 from mpl_toolkits.mplot3d import Axes3D
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
-#import cv2 as cv
+import cv2 as cv
+from PIL import Image
 import os
 import copy
 import yaml
@@ -27,6 +28,13 @@ density_for_intensity=True
 show_plot = True
 coexist = True
 top_most = False
+
+azimuth = -60
+elevation = 30
+x_limits = (0,1)
+y_limits = (0,1)
+z_limits = (0,1)
+
 #    fig, ax = plt.subplots(subplot_kw={'projection': '3d'})
 
 angle_to_normal = 'element' #choose between element and hit
@@ -1323,9 +1331,84 @@ def load_paths(param):
         paths.append(a)
     return paths
 
+def img2gif(path):
+    files=os.listdir(path)
+    files.sort(key= lambda f: os.path.getmtime(os.path.join(path,f)))
+    images=[]
+    for file in files:
+        dia=cv.imread(path+"/"+file)
+        dia=cv.cvtColor(dia,cv.COLOR_BGR2RGB)
+        images.append(Image.fromarray(dia).convert('RGB'))
+    images[0].save(path+"/"+'animation.gif',
+               save_all=True, append_images=images[1:], optimize=False, duration=400, loop=0)
+def simple_ray_tracer_main_with_seq(parameters):
+    if result_folder in os.listdir():
+        for item in os.listdir(result_folder):
+            os.remove(result_folder+"/"+item)
+    else:
+        os.mkdir(result_folder)
+    if 'display_settings' in parameters.keys():
+        load_display(parameters)
+    if 'optimization_settings' in parameters.keys():
+        if replace_tag_in_dict(parameters, "V1", "V1") or \
+                replace_tag_in_dict(parameters, "V2", "V2") or \
+                replace_tag_in_dict(parameters, "V3", "V3") or \
+                replace_tag_in_dict(parameters, "V4", "V4"):
+            messagebox.showinfo("Warning", "Optimization variables must not be in the optical train in this mode")
+
+    ran = list(parameters['sequence_settings'].values())[0]
+    sta = ran[0]
+    end = ran[1]
+    step = ran[2]
+    seq = np.linspace(sta, end, step)
+    mid = np.median(seq)
+    param = copy.deepcopy(parameters)
+    replace_tag_in_dict(param, "range", mid)
+    trains = load_paths(param)
+    fig, ax = plt.subplots(subplot_kw={'projection': '3d'})
+    def on_click(event):
+        azi, ele = ax.azim, ax.elev
+        x_lim = ax.get_xlim3d()
+        y_lim = ax.get_ylim3d()
+        z_lim = ax.get_zlim3d()
+        global azimuth, elevation, x_limits, y_limits, z_limits
+        azimuth = azi
+        elevation = ele
+        x_limits = x_lim
+        y_limits = y_lim
+        z_limits = z_lim
+
+    for t in trains:
+        t.propagate()
+        t.render(ax)
+    set_axes_equal(ax)
+    cid = fig.canvas.mpl_connect('button_release_event', on_click)
+    plt.tight_layout()
+    fig.canvas.manager.window.wm_geometry("+%d+%d" % (10, 10))
+    plt.show()
+
+    for frame in seq:
+        param = copy.deepcopy(parameters)
+        replace_tag_in_dict(param, "range", frame)
+        trains = load_paths(param)
+        fig, ax = plt.subplots(subplot_kw={'projection': '3d'})
+        for t in trains:
+            t.propagate()
+            t.render(ax)
+        ax.set_xlim3d = x_limits
+        ax.set_ylim3d = y_limits
+        ax.set_zlim3d = z_limits
+        ax.view_init(elev=elevation, azim=azimuth)
+        plt.savefig(result_folder + "/frame_var_" + str(frame) + ".png")
+        plt.close(fig)
+    img2gif(result_folder)
+    messagebox.showinfo("Complete",str(len(seq))+" frames rendered")
 def simple_ray_tracer_main(parameters):
     if 'display_settings' in parameters.keys():
         load_display(parameters)
+    if 'sequence_settings' in parameters.keys():
+        simple_ray_tracer_main_with_seq(parameters)
+        return
     if 'optimization_settings' in parameters.keys():
         if replace_tag_in_dict(parameters,"V1","V1") or \
                 replace_tag_in_dict(parameters,"V2","V2") or \
