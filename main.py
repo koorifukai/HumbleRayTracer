@@ -1356,14 +1356,18 @@ def simple_ray_tracer_main_with_seq(parameters):
                 replace_tag_in_dict(parameters, "V4", "V4"):
             messagebox.showinfo("Warning", "Optimization variables must not be in the optical train in this mode")
 
-    ran = list(parameters['sequence_settings'].values())[0]
-    sta = ran[0]
-    end = ran[1]
-    step = ran[2]
-    seq = np.linspace(sta, end, step)
-    mid = np.median(seq)
+    step = int(parameters['sequence_settings']['step'])
+    seqs = {}
+    mids = {}
+    for k,v in parameters['sequence_settings'].items():
+        if isinstance(v,list):
+            if len(v) == 2:
+                row = np.linspace(v[0],v[1],step)
+                mids[k] = np.median(row)
+                seqs[k] = row
     param = copy.deepcopy(parameters)
-    replace_tag_in_dict(param, "range", mid)
+    for k,v in mids.items():
+        replace_tag_in_dict(param, k, v)
     trains = load_paths(param)
     fig, ax = plt.subplots(subplot_kw={'projection': '3d'})
     def on_click(event):
@@ -1387,22 +1391,23 @@ def simple_ray_tracer_main_with_seq(parameters):
     fig.canvas.manager.window.wm_geometry("+%d+%d" % (10, 10))
     plt.show()
 
-    for frame in seq:
+    for frame in range(step):
         param = copy.deepcopy(parameters)
-        replace_tag_in_dict(param, "range", frame)
+        for k, v in seqs.items():
+            replace_tag_in_dict(param, k, v[frame])
         trains = load_paths(param)
         fig, ax = plt.subplots(subplot_kw={'projection': '3d'})
         for t in trains:
             t.propagate()
             t.render(ax)
+        ax.view_init(elev=elevation, azim=azimuth)
         ax.set_xlim3d = x_limits
         ax.set_ylim3d = y_limits
         ax.set_zlim3d = z_limits
-        ax.view_init(elev=elevation, azim=azimuth)
         plt.savefig(result_folder + "/frame_var_" + str(frame) + ".png")
         plt.close(fig)
     img2gif(result_folder)
-    messagebox.showinfo("Complete",str(len(seq))+" frames rendered")
+    messagebox.showinfo("Complete",str(step)+" frames rendered")
 def simple_ray_tracer_main(parameters):
     if 'display_settings' in parameters.keys():
         load_display(parameters)
