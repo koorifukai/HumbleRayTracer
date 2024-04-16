@@ -552,7 +552,7 @@ def interact_vhnrs(v, h, n, r: ray, s: surface, forced=None):  # vector, hit, no
         return
     if s.mode == "partial" and forced is None:
         r_hit = xdot(s.inverse, h)
-        shadow = ray(None, r_hit - 1e-3 * r.vec, r.vec.copy(), r.wv,lid=r.lid+0.1)
+        shadow = ray(None, r_hit - 1e-6 * r.vec, r.vec.copy(), r.wv,lid=r.lid+0.1)
         aa=s.transmission
         bb=1-s.transmission
         if s.transmission > 0.5:
@@ -696,7 +696,7 @@ def interact_plane(incident: ray, sur: surface):
     t_last = xdot(sur.move, last)
     t_towards = xdot(sur.move, towards)
     v = normalize(t_towards - t_last)
-    if v[0] == 0:
+    if v[0] == 0 or t_last[0]>=0:
         return
     hit = t_last - t_last[0] / v[0] * v
     f = hit[1:3]
