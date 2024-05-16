@@ -1655,10 +1655,13 @@ def loss_function(sur: surface, metric="aberrations", params=None,as_it_is = Fal
         target_ang = 0
         dist2ctr = False
         if not params is None:
-            if isinstance(params[0],int) or isinstance(params[0],float):
+            if isinstance(params,int) or isinstance(params,float):
                 target_ang=float(params)
-            if params[1] is True:
-                dist2ctr = True
+            else:
+                if isinstance(params[0],int) or isinstance(params[0],float):
+                    target_ang=float(params[0])
+                if params[1] is True:
+                    dist2ctr = True
         for lid in sources.keys():
             val = np.asarray(sources[lid])
             coords = val[:,0:3]
