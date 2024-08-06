@@ -1169,29 +1169,28 @@ def load_lights(param):
                             wavelength=int(raw_light['wavelength'])))
         if raw_light['type'] == "ring":
             para = raw_light['param']
-            wid = 0
+            radius = 0
             wh = 1
-            dia = 0
+            deg_cw = 0
             if not isinstance(para,list):
                 para = [para]
-            wid = float(para[0])
+            radius = float(para[0])
             if len(para) > 1:
                 wh = float(para[1])
             if len(para) > 2:
-                dia = int(para[2])
+                deg_cw = float(para[2])
             lights[-1].lid = lid
-            lights[-1].ring(wid, wh, dia)
+            lights[-1].ring(radius, wh, deg_cw)
         elif raw_light['type'] == "linear":
             para = raw_light['param']
-            wid =0
             if not isinstance(para, list):
                 para = [para]
-            wid = int(para[0])
-            dia = 0
+            wid = float(para[0])
+            deg_cw = 0
             if len(para) == 2:
-                dia = int(para[1])
+                deg_cw = float(para[1])
             lights[-1].lid = lid
-            lights[-1].linear(wid, dia)
+            lights[-1].linear(wid, deg_cw)
         elif raw_light['type'] == "point":
             para = raw_light['param']
             if para is None:
@@ -1593,7 +1592,7 @@ def simple_ray_tracer_main_w_analysis(parameters):
     if via_gui is True:
         fig.canvas.manager.window.wm_geometry("+%d+%d"%(10,10))
     plt.show()
-def test_current_config(param,candidates:dict,optim_settings:dict):
+def _test_current_config(param,candidates:dict,optim_settings:dict):
     if "V1" in candidates.keys():
         replace_tag_in_dict(param, "V1", candidates['V1'])
     if "V2" in candidates.keys():
