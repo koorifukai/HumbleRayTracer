@@ -16,7 +16,7 @@ import yaml
 import tkinter as tk
 from tkinter import filedialog,messagebox
 
-modes = ['inactive', 'refraction', 'reflection', 'partial', 'absorption', 'diffuse', 'aperture']
+modes = ['inactive', 'refraction', 'reflection', 'partial', 'absorption', 'diffuse', 'aperture' , 'perfect']
 
 lens_display_theta=10    #theta= longitudinal resolution
 lens_display_phi=20      #phi= circular resolution
@@ -271,18 +271,18 @@ class ray:
 class surface:
     def __init__(self,
                  coord, normal, shape,
-                 angles=None, radius=1, semidia=1.0,
+                 angles=None, radius=1, semidia=1.0, efl=0,
                  dial=0, height=1, width=1,
                  mode="inactive", n1=1, n2=1, transmission=1,
                  color=None, alpha=obj_display_density):
         self.mutable_params = {}
         if coord is None:
-            coord = np.array([0,0,0])
+            coord = np.array([0,0,0],np.float64)
         else:
             self.mutable_params['coord']=coord.copy()
-        self.vertex = coord
+        self.vertex = np.float64(coord)
         self.normal = np.array([-1, 0, 0], np.float64)
-        self.dial = dial
+        self.dial = float(dial)
         self.intersects=[]
         if not normal is None:
             self.normal = normalize(normal)
@@ -297,15 +297,17 @@ class surface:
         self.cylindrical = False
         self.disk = False
 
-        self.radius = radius  # +( -)
+        self.radius = float(radius)  # +( -)
         self.mutable_params['radius']=radius
         self.semidia = semidia
-        self.height=height
-        self.width=width
+        self.height=float(height)
+        self.width=float(width)
         self.base = np.array([[0, -semidia, -semidia],
                               [0, -semidia, semidia],
                               [0, semidia, semidia],
-                              [0, semidia, -semidia]])
+                              [0, semidia, -semidia]],np.float64)
+
+        self.efl = float(efl)
 
         if shape == "spherical":
             self.dial = 0
@@ -315,7 +317,7 @@ class surface:
             self.base = np.array([[0, -width / 2, -height / 2],
                                   [0, -width / 2, height / 2],
                                   [0, width / 2, height / 2],
-                                  [0, width / 2, -height / 2]])
+                                  [0, width / 2, -height / 2]],np.float64)
             self.cylindrical = True
             if abs(self.radius) < abs(0.5*self.width):
                 self.radius = 1
@@ -329,19 +331,27 @@ class surface:
                 self.base = np.array([[0, -width / 2, -height / 2],
                                       [0, -width / 2, height / 2],
                                       [0, width / 2, height / 2],
-                                      [0, width / 2, -height / 2]])
+                                      [0, width / 2, -height / 2]],np.float64)
             else:
                 self.disk = True
                 self.semidia = semidia
                 self.base = np.array([[0, -semidia, -semidia],
                                       [0, -semidia, semidia],
                                       [0, semidia, semidia],
-                                      [0, semidia, -semidia]])
+                                      [0, semidia, -semidia]],np.float64)
+        elif shape == "perfect":
+            self.radius = 0
+            self.disk = True
+            self.semidia = semidia
+            self.base = np.array([[0, -semidia, -semidia],
+                                  [0, -semidia, semidia],
+                                  [0, semidia, semidia],
+                                  [0, semidia, -semidia]],np.float64)
 
-        self.n2 = n2
-        self.n1 = n1
+        self.n2 = float(n2)
+        self.n1 = float(n1)
         self.mode = mode
-        self.transmission = transmission
+        self.transmission = float(transmission)
 
         self.move = np.eye(4)  # transform incoming ray into surface definition coords
         self.inverse = np.eye(4)  # transform coords from surface definition coords to real world for viz, hence inverse
@@ -351,7 +361,7 @@ class surface:
         self.color = (1,1,1)
         if isinstance(color,int):
             self.color=wavelength2rgb(color)
-        self.alpha = alpha
+        self.alpha = float(alpha)
 
         if not color is None:
             self.color = color
@@ -373,6 +383,7 @@ class surface:
         neu.disk = self.disk
         neu.radius = self.radius
         neu.semidia = self.semidia
+        neu.efl = self.efl
         neu.base = self.base.copy()
         neu.height = self.height
         neu.width = self.width
@@ -418,12 +429,12 @@ class surface:
 class assembly:
     def __init__(self):
         self.surfaces=[]
-        self.position=np.zeros(3)
-        self.normal=np.array([-1,0,0])
+        self.position=np.zeros(3,np.float64)
+        self.normal=np.array([-1,0,0],np.float64)
         self.normals=[]
         self.positions=[]
 
-        self.last_surface= np.zeros(3)
+        self.last_surface= np.zeros(3,np.float64)
 
     def add(self, s:surface, relative, normal=None, angles=None, dial=0):
         if not normal is None:
@@ -431,9 +442,9 @@ class assembly:
         elif normal is None and not angles is None:
             nor = ang2vec(angles)
         else:
-            nor = np.array([-1,0,0])
+            nor = np.array([-1,0,0],np.float64)
         if isinstance(relative,float) or isinstance(relative,int):
-            relative = np.array([relative,0,0])
+            relative = np.array([relative,0,0],np.float64)
         vertex = self.last_surface + relative
         s.vertex=vertex
         s.normal=nor
@@ -467,7 +478,7 @@ class assembly:
         if np.dot(self.normal,additional.normal)<1:
             return
         if isinstance(relative, float) or isinstance(relative, int):
-            relative = np.array([relative, 0, 0])
+            relative = np.array([relative, 0, 0],np.float64)
         for i,s in enumerate(additional.surfaces):
             if where=="tail" or i>0:
                 s.vertex = s.vertex + self.last_surface
@@ -690,7 +701,7 @@ def interact_plane(incident: ray, sur: surface):
         msg=",".join(["backstabbing","sid:"+str(sur.sid),"shape:"+sur.shape])
         #print(msg)
         return
-    n = np.array([-1, 0, 0])
+    n = np.array([-1, 0, 0],np.float64)
     last = incident.trace[-1]
     towards = last + incident.vec
     t_last = xdot(sur.move, last)
@@ -717,6 +728,50 @@ def interact_plane(incident: ray, sur: surface):
             incident.active = False
         return
     interact_vhnrs(v, hit, n, incident, sur)
+
+def interact_perfect(incident: ray, sur: surface):
+    if np.dot(incident.vec,sur.normal)>=0:
+        msg=",".join(["backstabbing","sid:"+str(sur.sid),"shape:"+sur.shape])
+        #print(msg)
+        return
+    last = incident.trace[-1]
+    towards = last + incident.vec
+    t_last = xdot(sur.move, last)
+    t_towards = xdot(sur.move, towards)
+    v = normalize(t_towards - t_last)
+    if v[0] == 0 or t_last[0]>=0:
+        return
+    hit = t_last - t_last[0] / v[0] * v
+    f = hit[1:3]
+    if np.linalg.norm(f)>sur.semidia:
+        return
+    #interact_vhnrs(v, hit, n, incident, sur)
+
+    dy = v[1] / v[0]
+    if dy == 0:
+        vy = 0
+    else:
+        oy = hit[1] / dy
+        iy = 1 / (1 / sur.efl - 1 / oy)
+        vy = hit[1]/iy
+
+    dz = v[2] / v[0]
+    if dz ==0:
+        vz = 0
+    else:
+        oz = hit[2] / dz
+        iz = 1 / (1 / sur.efl - 1 / oz)
+        vz = hit[2]/iz
+    v_out = normalize(np.array([1,vy,vz]))
+
+    r_hit = xdot(sur.inverse,hit)
+    r_towards = xdot(sur.inverse,v_out)
+    incident.vec = r_towards
+    incident.trace.append(r_hit)
+    stat = [r_hit, v]
+    ray_sta = extract_ray_info(incident)
+    stat.extend(ray_sta)
+    sur.intersects.append(stat)
 
 def lens_vertices(radius, semidia):
     r = abs(radius)
@@ -923,7 +978,7 @@ class light:
     def linear(self,width,dial=0):
         self.birth = "linear"
         rad=np.radians(dial)
-        core = np.zeros((self.number, 3))
+        core = np.zeros((self.number, 3),np.float64)
         core[:, 0] = np.linspace(-width/2,width/2,self.number)
         core[:, 1] = core[:,0]*np.cos(rad+np.pi/2)
         core[:, 2] = core[:,0]*np.sin(rad+np.pi/2)
@@ -941,7 +996,7 @@ class light:
             w*=whr
         rad=np.radians(dial)
         rhr=axial_rotation(np.array([-1,0,0]),rad)
-        core = np.zeros((self.number, 3))
+        core = np.zeros((self.number, 3),np.float64)
         core[:, 0] = np.linspace(0, 2 * np.pi, self.number+1)[0:-1]
         core[:, 1] = np.cos(core[:, 0]) * r * w
         core[:, 2] = np.sin(core[:, 0]) * r * h
@@ -973,7 +1028,7 @@ class light:
         x = np.zeros(len(ys))
         y = np.asarray(ys)
         z = np.asarray(zs)
-        core = np.zeros((len(x), 3))
+        core = np.zeros((len(x), 3),np.float64)
         core[:, 0] = 0
         core[:, 1] = y
         core[:, 2] = z
@@ -1006,7 +1061,7 @@ class train:
 
         self.show_nor = show_normal
         self.show_surfaces = show_surfaces
-        self.extremes = np.zeros((3, 2))
+        self.extremes = np.zeros((3, 2),np.float64)
         self.longest = 0
     def set_light(self, source: light):
         self.light = source
@@ -1076,6 +1131,8 @@ class train:
                     interact_sphere(r, s)
                 elif s.shape == "cylindrical":
                     interact_cylinder(r, s)
+                elif s.shape == "perfect":
+                    interact_perfect(r, s)
                 if r.active_until >= i and r.active_until != -1:
                     break
             r.intensities = np.asarray(r.intensities)
@@ -1244,22 +1301,25 @@ def build_surface(raw):
     mode = "inactive"
     if "mode" in raw.keys():
         mode =raw['mode']
+    efl = 0
+    if "efl" in raw.keys():
+        efl = float(raw['efl'])
     n1=1
     n2=1
     if "n1" in raw.keys():
-        n1 = raw['n1']
+        n1 = float(raw['n1'])
     if "n2" in raw.keys():
-        n2 = raw['n2']
+        n2 = float(raw['n2'])
     transmission = 1.0
     if "transmission" in raw.keys():
-        transmission = raw['transmission']
+        transmission = float(raw['transmission'])
     color=None
     if "color" in raw.keys():
         color = raw['color']
     alpha = obj_display_density
     if "alpha" in raw.keys():
         alpha = float(raw['alpha'])
-    return surface(coord,normal,shape,angles,radius,semidia,dial,height,width,mode,n1,n2,transmission,color,alpha)
+    return surface(coord,normal,shape,angles,radius,semidia,efl,dial,height,width,mode,n1,n2,transmission,color,alpha)
 def load_surfaces(surfaces):
     surs={}
     for i in range(len(surfaces)):
@@ -1702,9 +1762,9 @@ class normalizer:
             self.lows.append(v[0])
             self.highs.append(v[1])
             self.scales.append(v[1] - v[0])
-        self.lows= np.asarray(self.lows)
-        self.highs=np.asarray(self.highs)
-        self.scales=np.asarray(self.scales)
+        self.lows= np.asarray(self.lows,np.float64)
+        self.highs=np.asarray(self.highs,np.float64)
+        self.scales=np.asarray(self.scales,np.float64)
     def recover(self,vals):
         if isinstance(vals,list):
             out = []
