@@ -15,13 +15,17 @@ import yaml
 
 import tkinter as tk
 from tkinter import filedialog,messagebox
+from collections import Counter
 
-modes = ['inactive', 'refraction', 'reflection', 'partial', 'absorption', 'diffuse', 'aperture' , 'perfect']
+modes = ['inactive', 'refraction', 'reflection', 'partial', 'absorption',
+         'diffuse', 'aperture']
 
 lens_display_theta=10    #theta= longitudinal resolution
 lens_display_phi=20      #phi= circular resolution
 ray_display_density=0.5
 obj_display_density=0.5
+overshoot_travelled=0.1
+overshoot_solid = True
 show_grid = True
 fill_with_grey = False
 density_for_intensity=True
@@ -308,6 +312,10 @@ class surface:
                               [0, semidia, -semidia]],np.float64)
 
         self.efl = float(efl)
+        self.n2 = float(n2)
+        self.n1 = float(n1)
+        self.mode = mode
+        self.transmission = float(transmission)
 
         if shape == "spherical":
             self.dial = 0
@@ -340,18 +348,20 @@ class surface:
                                       [0, semidia, semidia],
                                       [0, semidia, -semidia]],np.float64)
         elif shape == "perfect":
-            self.radius = 0
-            self.disk = True
+            self.n2 = 1.5 # roughly BK7, used only for visualizing surface
             self.semidia = semidia
             self.base = np.array([[0, -semidia, -semidia],
                                   [0, -semidia, semidia],
                                   [0, semidia, semidia],
                                   [0, semidia, -semidia]],np.float64)
-
-        self.n2 = float(n2)
-        self.n1 = float(n1)
-        self.mode = mode
-        self.transmission = float(transmission)
+            if mode == "refraction":
+                # model with one flat surface
+                # viz with a thin lens
+                v = self.efl
+                vn = 1/v/(self.n2-1)
+                self.radius = 2/vn
+            elif mode == "reflection":
+                self.radius = self.efl * -2
 
         self.move = np.eye(4)  # transform incoming ray into surface definition coords
         self.inverse = np.eye(4)  # transform coords from surface definition coords to real world for viz, hence inverse
@@ -372,9 +382,11 @@ class surface:
 
         self.going=None
         self.fan=0
+        self.light_edge = None#(np.random.rand(),np.random.rand(),np.random.rand())
 
     def copy(self,afresh = False):
         neu = surface(self.vertex.copy(),self.normal.copy(),self.shape)
+        neu.mutable_params = self.mutable_params.copy()
         neu.dial = self.dial
         neu.mode = self.mode
         neu.n1 = self.n1
@@ -394,6 +406,8 @@ class surface:
         neu.color = self.color
         neu.alpha = self.alpha
         neu.rendered = False
+        neu.going = self.going
+        neu.fan = self.fan
         if afresh is False:
             neu.rendered = True
         return neu
@@ -637,7 +651,7 @@ def interact_sphere(incident: ray, sur: surface):
     if np.dot(-v, np.array([-1, 0, 0])) < 0:
         # backstabbing
         msg=",".join(["backstabbing","sid:"+str(sur.sid),"shape:"+sur.shape])
-        #print(msg)
+        print(msg)
         return
 
     c = np.linalg.norm(t_last)
@@ -669,7 +683,7 @@ def interact_cylinder(incident: ray, sur: surface):
     v = normalize(t_towards - t_last)
     if np.dot(-v, np.array([-1, 0, 0])) < 0:
         msg=",".join(["backstabbing","sid:"+str(sur.sid),"shape:"+sur.shape])
-        #print(msg)
+        print(msg)
         return
     v_flat = normalize(np.array([v[0], v[1], 0]))
     t_flat = np.array([t_last[0], t_last[1], 0])
@@ -699,7 +713,7 @@ def interact_cylinder(incident: ray, sur: surface):
 def interact_plane(incident: ray, sur: surface):
     if np.dot(incident.vec,sur.normal)>=0:
         msg=",".join(["backstabbing","sid:"+str(sur.sid),"shape:"+sur.shape])
-        #print(msg)
+        print(msg)
         return
     n = np.array([-1, 0, 0],np.float64)
     last = incident.trace[-1]
@@ -732,7 +746,7 @@ def interact_plane(incident: ray, sur: surface):
 def interact_perfect(incident: ray, sur: surface):
     if np.dot(incident.vec,sur.normal)>=0:
         msg=",".join(["backstabbing","sid:"+str(sur.sid),"shape:"+sur.shape])
-        #print(msg)
+        print(msg)
         return
     last = incident.trace[-1]
     towards = last + incident.vec
@@ -746,6 +760,13 @@ def interact_perfect(incident: ray, sur: surface):
     if np.linalg.norm(f)>sur.semidia:
         return
     #interact_vhnrs(v, hit, n, incident, sur)
+
+    oh = f
+    a1 = np.arccos(np.dot(np.array([0, 0, 1]), np.array([0, oh[0], oh[1]]), np.float64))
+    a2 = np.pi/2-a1
+    m1 = axial_rotation(np.array([1, 0, 0]), a1)
+    m2 = axial_rotation(np.array([1, 0, 0]), a2)
+
 
     dy = v[1] / v[0]
     if dy == 0:
@@ -864,6 +885,28 @@ def spherical_coords(sur: surface):
 
         verts = [list(zip(x, y, z))]
         return verts
+def highlight_surface_edge(coords):
+    # Dictionary to store edge counts
+    edge_counts = Counter()
+    # Process each facet to extract edges
+    for facet in coords:
+        # Extract all edges from the facet
+        edges = [
+            (facet[0], facet[1]),
+            (facet[1], facet[2]),
+            (facet[2], facet[3]),
+            (facet[3], facet[0]),
+        ]
+        # Normalize each edge to avoid duplicates (e.g., (v1, v2) and (v2, v1))
+        for edge in edges:
+            # Sort vertices in the edge to have a consistent order (v1, v2) where v1 < v2
+            normalized_edge = tuple(sorted(edge))
+            # Update the counter
+            edge_counts[normalized_edge] += 1
+
+    # Find edges that have only been visited once
+    single_visit_edges = [edge for edge, count in edge_counts.items() if count == 1]
+    return single_visit_edges
 
 def plot_surface(ax: Axes3D, sur: surface, normal=False):
     if sur.rendered is True:
@@ -892,6 +935,26 @@ def plot_surface(ax: Axes3D, sur: surface, normal=False):
         y = [ver[1], ver[1] + nor[1]]
         z = [ver[2], ver[2] + nor[2]]
         ax.plot(x, y, z, color=(1,1,1), alpha=obj_display_density)
+    if not sur.light_edge is None:
+        edges = highlight_surface_edge(coords)
+        vertices = [item for sublist in coords for item in sublist]
+        for edge in edges:
+            sta = edge[0]
+            end = edge[1]
+            df = np.array(vertices)-sta
+            df = np.sum(np.abs(df),axis=1)
+            proximi = np.array(np.where(df<1e-4))[0]
+            if len(proximi) ==4:
+                continue
+            df = np.array(vertices)-end
+            df = np.sum(np.abs(df),axis=1)
+            proximi = np.array(np.where(df<1e-4))[0]
+            if len(proximi) ==4:
+                continue
+            xs = [sta[0], end[0]]
+            ys = [sta[1], end[1]]
+            zs = [sta[2], end[2]]
+            ax.plot(xs, ys, zs, color=sur.light_edge)
     sur.rendered = True
 
 def plot_ray(ax: Axes3D, incident: ray):
@@ -919,11 +982,15 @@ def plot_ray(ax: Axes3D, incident: ray):
             ax.plot(xs[sta:end], ys[sta:end], zs[sta:end], color=incident.color, alpha=ray_display_density * alp)
         overshoot = incident.active
         if overshoot:
+            global overshoot_travelled,overshoot_solid
+            linesty = "solid"
+            if overshoot_solid is False:
+                linesty = "dotted"
             travelled= incident.peer_dist
-            xo = [xs[-1],xs[-1]+incident.vec[0] * travelled * 0.1]
-            yo = [ys[-1],ys[-1]+incident.vec[1] * travelled * 0.1]
-            zo = [zs[-1],zs[-1]+incident.vec[2] * travelled * 0.1]
-            ax.plot(xo, yo, zo, linestyle="dotted", color=incident.color, alpha=ray_display_density * density[-1][1])
+            xo = [xs[-1],xs[-1]+incident.vec[0] * travelled * overshoot_travelled]
+            yo = [ys[-1],ys[-1]+incident.vec[1] * travelled * overshoot_travelled]
+            zo = [zs[-1],zs[-1]+incident.vec[2] * travelled * overshoot_travelled]
+            ax.plot(xo, yo, zo, linestyle=linesty, color=incident.color, alpha=ray_display_density * density[-1][1])
 
 def set_axes_equal(ax):
     x_limits = ax.get_xlim3d()
@@ -962,12 +1029,22 @@ def save_figure(fig):
     data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
     #cv.imwrite("rendering.jpg", cv.cvtColor(data, cv.COLOR_BGR2RGB))
 
+def on_key(event):
+    if event.key == 'enter':
+        plt.close(event.canvas.figure)
+    if event.key == 'escape':
+        plt.close(event.canvas.figure)
 class light:
-    def __init__(self, position, vector, number=6,wavelength=0):
+    def __init__(self, position, vector, angles=None, number=6,wavelength=0):
         self.lid=-1
         self.rays = []
         self.position=position
-        self.vector=normalize(vector)
+        if angles is None:
+            self.vector=normalize(vector)
+        else:
+            azi = np.radians(angles[0])
+            ele = np.radians(angles[1])
+            self.vector = np.array([np.cos(azi)*np.cos(ele),np.sin(azi)*np.cos(ele),np.sin(ele)])
         self.number=number
         self.divergence=0
         self.wavelength=wavelength
@@ -1131,7 +1208,7 @@ class train:
                     interact_sphere(r, s)
                 elif s.shape == "cylindrical":
                     interact_cylinder(r, s)
-                elif s.shape == "perfect":
+                elif s.shape.startswith("perfect"):
                     interact_perfect(r, s)
                 if r.active_until >= i and r.active_until != -1:
                     break
@@ -1179,7 +1256,8 @@ def load_display(param):
     global lens_display_theta, lens_display_phi, \
         ray_display_density, obj_display_density, \
         fill_with_grey, show_grid, density_for_intensity, \
-        show_plot, coexist, top_most
+        show_plot, coexist, top_most, overshoot_travelled,\
+        overshoot_solid
     if 'show_plot' in glo.keys():
         show_plot = glo['show_plot']
     if 'coexist' in glo.keys():
@@ -1198,15 +1276,19 @@ def load_display(param):
         ray_display_density = float(glo['ray_display_density'])
     if 'obj_display_density' in glo.keys():
         obj_display_density = float(glo['obj_display_density'])
+    if 'overshoot_travelled' in glo.keys():
+        overshoot_travelled = float(glo['overshoot_travelled'])
+    if 'overshoot_solid' in glo.keys():
+        overshoot_solid = bool(glo['overshoot_solid'])
     if 'fill_with_grey' in glo.keys():
-        fill_with_grey = glo['fill_with_grey']
+        fill_with_grey = bool(glo['fill_with_grey'])
     if 'show_grid' in glo.keys():
-        show_grid = glo['show_grid']
+        show_grid = bool(glo['show_grid'])
     if 'density_for_intensity' in glo.keys():
-        density_for_intensity = glo['density_for_intensity']
+        density_for_intensity = bool(glo['density_for_intensity'])
         ray_display_density= 1
     if 'top_most' in glo.keys():
-        top_most = glo['top_most']
+        top_most = bool(glo['top_most'])
 def list2vec(unknown):
     out = np.zeros(len(unknown))
     for i in range(len(unknown)):
@@ -1220,10 +1302,17 @@ def load_lights(param):
         raw_light = list(raw_light.values())[0]
         lid = raw_light['lid']
         posi = list2vec(raw_light['position'])
-        vec = normalize(list2vec(raw_light['vector']))
-        lights.append(light(posi, normalize(vec),
-                            number=int(raw_light['number']),
-                            wavelength=int(raw_light['wavelength'])))
+        if not "angles" in raw_light.keys():
+            vec = normalize(list2vec(raw_light['vector']))
+            lights.append(light(posi, normalize(vec),
+                                number=int(raw_light['number']),
+                                wavelength=int(raw_light['wavelength'])))
+        else:
+            vec = None
+            angs = raw_light['angles']
+            lights.append(light(posi, None,list2vec(angs),
+                                number=int(raw_light['number']),
+                                wavelength=int(raw_light['wavelength'])))
         if raw_light['type'] == "ring":
             para = raw_light['param']
             radius = 0
@@ -1448,6 +1537,7 @@ def simple_ray_tracer_main_with_seq(parameters):
     cid = fig.canvas.mpl_connect('button_release_event', on_click)
     plt.tight_layout()
     fig.canvas.manager.window.wm_geometry("+%d+%d" % (10, 10))
+    fig.canvas.mpl_connect('key_press_event', on_key)
     plt.show()
 
     for frame in range(step):
@@ -1489,6 +1579,7 @@ def simple_ray_tracer_main(parameters):
     global via_gui
     if via_gui is True:
         fig.canvas.manager.window.wm_geometry("+%d+%d"%(10,10))
+        fig.canvas.mpl_connect('key_press_event', on_key)
     plt.show()
 
 def smooth_line(raw,noe):
@@ -1651,6 +1742,7 @@ def simple_ray_tracer_main_w_analysis(parameters):
     global via_gui
     if via_gui is True:
         fig.canvas.manager.window.wm_geometry("+%d+%d"%(10,10))
+        fig.canvas.mpl_connect('key_press_event', on_key)
     plt.show()
 def _test_current_config(param,candidates:dict,optim_settings:dict):
     if "V1" in candidates.keys():
@@ -1994,6 +2086,7 @@ def ota():
     if via_gui is True:
       #cv.imwrite("rendering.jpg",cv.cvtColor(data,cv.COLOR_BGR2RGB))
       fig.canvas.manager.window.wm_geometry("+%d+%d"%(10,10))
+      fig.canvas.mpl_connect('key_press_event', on_key)
     plt.show()
 
 def run_gui():
@@ -2070,6 +2163,7 @@ def run_gui():
     y = (hs / 2) - (h / 2)
     root.geometry('+%d+%d' % (x, y))
     root.attributes('-topmost',top_most)
+    root.bind('<Return>', lambda event: on_run())
     root.mainloop()
     last_path = parameters["path"]
     try:
