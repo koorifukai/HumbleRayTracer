@@ -278,6 +278,7 @@ class surface:
                  angles=None, radius=1, semidia=1.0, efl=0,
                  dial=0, height=1, width=1,
                  mode="inactive", n1=1, n2=1, transmission=1,
+                 select=None,
                  color=None, alpha=obj_display_density):
         self.mutable_params = {}
         if coord is None:
@@ -316,7 +317,17 @@ class surface:
         self.n1 = float(n1)
         self.mode = mode
         self.transmission = float(transmission)
-
+        self.select = select
+        self.sel_cond = []
+        if not select is None:
+            if "-" in select:
+                sel = select.split("-")
+            else:
+                sel = [select]
+            for s in sel:
+                dire = s[0].upper()
+                which = int(s[1:])
+                self.sel_cond.append([dire,which])
         if shape == "spherical":
             self.dial = 0
         elif shape == "cylindrical":
@@ -408,6 +419,8 @@ class surface:
         neu.rendered = False
         neu.going = self.going
         neu.fan = self.fan
+        neu.select = self.select
+        neu.sel_cond = self.sel_cond
         if afresh is False:
             neu.rendered = True
         return neu
@@ -1202,6 +1215,22 @@ class train:
                 s = self.surfaces[i]
                 if s.mode == "inactive":
                     continue
+                effective = True
+                if not s.select is None:
+                    for con in s.sel_cond:
+                        which_way,id = con
+                        if which_way == 'O':
+                            if id == r.lid or id == r.wv:
+                                effective = True
+                                break
+                            else:
+                                effective = False
+                        elif which_way == 'X':
+                            if id == r.lid or id == r.wv:
+                                effective = False
+                                break
+                if effective is False:
+                    continue
                 if s.shape == "plano":
                     interact_plane(r, s)
                 elif s.shape == "spherical":
@@ -1402,13 +1431,16 @@ def build_surface(raw):
     transmission = 1.0
     if "transmission" in raw.keys():
         transmission = float(raw['transmission'])
+    select=None
+    if "select" in raw.keys():
+        select = str(raw['select'])
     color=None
     if "color" in raw.keys():
         color = raw['color']
     alpha = obj_display_density
     if "alpha" in raw.keys():
         alpha = float(raw['alpha'])
-    return surface(coord,normal,shape,angles,radius,semidia,efl,dial,height,width,mode,n1,n2,transmission,color,alpha)
+    return surface(coord,normal,shape,angles,radius,semidia,efl,dial,height,width,mode,n1,n2,transmission,select,color,alpha)
 def load_surfaces(surfaces):
     surs={}
     for i in range(len(surfaces)):
