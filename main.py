@@ -16,6 +16,7 @@ import yaml
 import tkinter as tk
 from tkinter import filedialog,messagebox
 from collections import Counter
+import datetime
 
 modes = ['inactive', 'refraction', 'reflection', 'partial', 'absorption',
          'diffuse', 'aperture']
@@ -1095,6 +1096,7 @@ class light:
         transformed = self.rotate(self.vector,core) + self.position
         for i in range(len(transformed)):
             self.rays.append(ray(container=self.rays, position=transformed[i, :], vector=self.vector, wavelength=self.wavelength,lid=self.lid))
+    """
     def uniform(self,r):
         self.birth="uniform"
         # distribute n points into concentric rings
@@ -1122,6 +1124,33 @@ class light:
         core[:, 0] = 0
         core[:, 1] = y
         core[:, 2] = z
+        transformed = self.rotate(self.vector, core) + self.position
+        for i in range(len(transformed)):
+            self.rays.append(
+                ray(container=self.rays, position=transformed[i, :], vector=self.vector, wavelength=self.wavelength,lid=self.lid))
+    """
+    def uniform(self,r):
+        self.birth="uniform"
+        # distribute n points into hexagonal grid
+
+        pts = [[0,0]]
+        layer = 1
+        while len(pts)<self.number:
+            ra = (layer*r)/np.sqrt(self.number)
+            if (ra>r):
+                break
+            nump = 6*layer
+            for i in range(nump):
+                ang = (i/nump)*2*np.pi
+                x = ra * np.cos(ang)
+                y = ra * np.sin(ang)
+                pts.append([x,y])
+            layer+=1
+        plane = np.asarray(pts)
+        core = np.zeros((len(pts), 3),np.float64)
+        core[:, 0] = 0
+        core[:, 1] = np.asarray(plane[:, 0])
+        core[:, 2] = np.asarray(plane[:, 1])
         transformed = self.rotate(self.vector, core) + self.position
         for i in range(len(transformed)):
             self.rays.append(
@@ -1522,11 +1551,12 @@ def img2gif(path):
     images[0].save(path+"/"+'animation.gif',
                save_all=True, append_images=images[1:], optimize=False, duration=400, loop=0)
 def simple_ray_tracer_main_with_seq(parameters):
-    if result_folder in os.listdir():
-        for item in os.listdir(result_folder):
-            os.remove(result_folder+"/"+item)
-    else:
+    if not result_folder in os.listdir():
         os.mkdir(result_folder)
+    sub_folder = datetime.datetime.now().strftime("%Y_%m_%d_%H%M%S")
+    while sub_folder in os.listdir(result_folder):
+        sub_folder = datetime.datetime.now().strftime("%Y_%m_%d_%H%M%S")
+    os.mkdir(result_folder+"/"+sub_folder)
     if 'display_settings' in parameters.keys():
         load_display(parameters)
     if 'optimization_settings' in parameters.keys():
@@ -1585,9 +1615,9 @@ def simple_ray_tracer_main_with_seq(parameters):
         ax.set_xlim3d = x_limits
         ax.set_ylim3d = y_limits
         ax.set_zlim3d = z_limits
-        plt.savefig(result_folder + "/frame_var_" + str(frame) + ".png")
+        plt.savefig(result_folder +"/"+ sub_folder + "/frame_var_" + str(frame) + ".png")
         plt.close(fig)
-    img2gif(result_folder)
+    img2gif(result_folder+"/"+sub_folder)
     messagebox.showinfo("Complete",str(step)+" frames rendered")
 def simple_ray_tracer_main(parameters):
     if 'display_settings' in parameters.keys():
@@ -1656,11 +1686,12 @@ def replace_tag_in_dict(d, tag, val):
     return replaced
 
 def simple_ray_tracer_main_w_analysis(parameters):
-    if result_folder in os.listdir():
-        for item in os.listdir(result_folder):
-            os.remove(result_folder+"/"+item)
-    else:
+    if not result_folder in os.listdir():
         os.mkdir(result_folder)
+    sub_folder = datetime.datetime.now().strftime("%Y_%m_%d_%H%M%S")
+    while sub_folder in os.listdir(result_folder):
+        sub_folder = datetime.datetime.now().strftime("%Y_%m_%d_%H%M%S")
+    os.mkdir(result_folder+"/"+sub_folder)
     if 'result_settings' in parameters.keys():
         load_result_settings(parameters)
     if 'display_settings' in parameters.keys():
@@ -1758,9 +1789,9 @@ def simple_ray_tracer_main_w_analysis(parameters):
             ax.set_xticks(xtic)
             ax.xaxis.set_ticklabels([])
             ax.grid(True)
-            plt.savefig(result_folder+"/s"+str(s.sid)+".png")
+            plt.savefig(result_folder+"/"+sub_folder+"/s"+str(s.sid)+".png")
             plt.close(fig)
-        with open(result_folder+"/"+"ray_sur_interactions.csv",'w') as writer:
+        with open(result_folder+"/"+sub_folder+"/"+"ray_sur_interactions.csv",'w') as writer:
              writer.writelines(lines)
     plt.style.use('dark_background')
 
