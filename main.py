@@ -31,6 +31,7 @@ show_grid = True
 fill_with_grey = False
 density_for_intensity=True
 show_plot = True
+plot_last_only = False
 coexist = True
 top_most = False
 
@@ -1132,13 +1133,11 @@ class light:
     def uniform(self,r):
         self.birth="uniform"
         # distribute n points into hexagonal grid
-
         pts = [[0,0]]
         layer = 1
-        while len(pts)<self.number:
-            ra = (layer*r)/np.sqrt(self.number)
-            if (ra>r):
-                break
+        nol = int(round(np.sqrt(2*self.number/6)))
+        for l in range(1,nol+1):
+            ra = l/nol*r
             nump = 6*layer
             for i in range(nump):
                 ang = (i/nump)*2*np.pi
@@ -1151,6 +1150,22 @@ class light:
         core[:, 0] = 0
         core[:, 1] = np.asarray(plane[:, 0])
         core[:, 2] = np.asarray(plane[:, 1])
+        transformed = self.rotate(self.vector, core) + self.position
+        for i in range(len(transformed)):
+            self.rays.append(
+                ray(container=self.rays, position=transformed[i, :], vector=self.vector, wavelength=self.wavelength,lid=self.lid))
+    def gaussian(self,half_e_square):
+        self.birth="gaussian"
+        # randomly distribute N points
+
+        sigma = half_e_square/2/np.sqrt(2)
+        xs = np.random.normal(0, sigma, self.number)
+        ys = np.random.normal(0, sigma, self.number)
+
+        core = np.zeros((len(xs), 3),np.float64)
+        core[:, 0] = 0
+        core[:, 1] = np.asarray(xs)
+        core[:, 2] = np.asarray(ys)
         transformed = self.rotate(self.vector, core) + self.position
         for i in range(len(transformed)):
             self.rays.append(
@@ -1315,7 +1330,8 @@ def load_display(param):
         ray_display_density, obj_display_density, \
         fill_with_grey, show_grid, density_for_intensity, \
         show_plot, coexist, top_most, overshoot_travelled,\
-        overshoot_solid
+        overshoot_solid, plot_last_only
+
     if 'show_plot' in glo.keys():
         show_plot = glo['show_plot']
     if 'coexist' in glo.keys():
@@ -1347,6 +1363,10 @@ def load_display(param):
         ray_display_density= 1
     if 'top_most' in glo.keys():
         top_most = bool(glo['top_most'])
+    if 'plot_last_only' in glo.keys():
+        plot_last_only = glo['plot_last_only']
+
+
 def list2vec(unknown):
     out = np.zeros(len(unknown))
     for i in range(len(unknown)):
@@ -1408,6 +1428,10 @@ def load_lights(param):
             ra = float(raw_light['param'])
             lights[-1].lid = lid
             lights[-1].uniform(ra)
+        elif raw_light['type'] == "gaussian":
+            half_e_square = float(raw_light['param'])
+            lights[-1].lid = lid
+            lights[-1].gaussian(half_e_square)
     return lights
 
 def check_registered(newly, collec):
@@ -1711,7 +1735,7 @@ def simple_ray_tracer_main_w_analysis(parameters):
     columns=['id','v1','v2','v3','c1','c2','c3','ang2normal','wv','intensity','lid']
     lines=[]
     lines.append(smooth_line(columns,len(columns))+"\n")
-    for s in plotted_surfaces:
+    for sid,s in enumerate(plotted_surfaces):
         section = s.shape+"  "+s.mode+"  "+str(s.sid)
         lines.append(smooth_line(section,len(columns))+"\n")
         base = s.base[:,1:]
@@ -1734,8 +1758,9 @@ def simple_ray_tracer_main_w_analysis(parameters):
         rtm = np.array([[np.cos(rhr),-np.sin(rhr)],[np.sin(rhr),np.cos(rhr)]])
         base = np.dot(base, rtm)
         if show_plot is True:
-            fig,ax=plt.subplots()
-            ax.fill(base[:, 0], base[:, 1], color=(0.5,0.5,0.5))
+            if plot_last_only is False or sid==(len(plotted_surfaces)-1):
+                fig,ax=plt.subplots()
+                ax.fill(base[:, 0], base[:, 1], color=(0.5,0.5,0.5))
 
         for k,stat in enumerate(s.intersects):
             abs_coord = stat[0]
@@ -1775,22 +1800,24 @@ def simple_ray_tracer_main_w_analysis(parameters):
                 if wv!=0:
                     c=wavelength2rgb(wv)
             if show_plot is True:
-                ax.scatter(reduc[0],reduc[1],color=c,marker='o',alpha=inten)
+                if plot_last_only is False or sid == (len(plotted_surfaces) - 1):
+                    ax.scatter(reduc[0],reduc[1],color=c,marker='o',alpha=inten)
 
         if show_plot is True:
-            ax.set_title("surface"+str(s.sid)+","+s.shape)
-            ylocs, lbls = plt.yticks()
-            interval = ylocs[1] - ylocs[0]
-            ax.set_yticks(ylocs)
-            lims = ax.get_xlim()
-            lefty = -np.arange(0,-lims[0],interval)
-            righty = np.arange(0,lims[1],interval)
-            xtic = np.concatenate([lefty,righty])
-            ax.set_xticks(xtic)
-            ax.xaxis.set_ticklabels([])
-            ax.grid(True)
-            plt.savefig(result_folder+"/"+sub_folder+"/s"+str(s.sid)+".png")
-            plt.close(fig)
+            if plot_last_only is False or sid == (len(plotted_surfaces) - 1):
+                ax.set_title("surface"+str(s.sid)+","+s.shape)
+                ylocs, lbls = plt.yticks()
+                interval = ylocs[1] - ylocs[0]
+                ax.set_yticks(ylocs)
+                lims = ax.get_xlim()
+                lefty = -np.arange(0,-lims[0],interval)
+                righty = np.arange(0,lims[1],interval)
+                xtic = np.concatenate([lefty,righty])
+                ax.set_xticks(xtic)
+                ax.xaxis.set_ticklabels([])
+                ax.grid(True)
+                plt.savefig(result_folder+"/"+sub_folder+"/s"+str(s.sid)+".png")
+                plt.close(fig)
         with open(result_folder+"/"+sub_folder+"/"+"ray_sur_interactions.csv",'w') as writer:
              writer.writelines(lines)
     plt.style.use('dark_background')
