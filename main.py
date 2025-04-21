@@ -434,9 +434,14 @@ class surface:
             self.normal = ang2vec(angles)
         self.calc_mat()
 
-    def calc_mat(self):
-        #r=rot_transform(np.array([-1,0,0]),self.normal)
-        r = upright_rot_transform(np.array([-1, 0, 0]), self.normal)
+    def calc_mat(self, upright=True, external_rot=None):
+        if upright:
+            r = upright_rot_transform(np.array([-1, 0, 0]), self.normal)
+        elif external_rot is not None:
+            r = external_rot
+        else:
+            r = rot_transform(np.array([-1, 0, 0]), self.normal)
+
         t = self.vertex - self.normal * self.radius
         ang = self.dial
         if ang != 0:
@@ -483,26 +488,64 @@ class assembly:
 
         self.surfaces.append(s)
 
-    def place(self,position,vector=None,angles=None):
+    def place(self,position,vector=None,angles=None,dial=None):
         if not angles is None:
             vector = ang2vec(angles)
         vector=normalize(vector)
         self.position=position
+
+        R_align = rot_transform(np.array([-1, 0, 0]), vector)
+        if dial is not None:
+            R_dial = axial_rotation(vector, np.radians(dial))
+            R_total = np.dot(R_dial, R_align)
+        else:
+            R_total = R_align
+
+        # Create 4x4 homogeneous transformation matrix
+        T = np.eye(4)
+        T[0:3, 0:3] = R_total
+        T[0:3, 3] = position
+        
+        for i, s in enumerate(self.surfaces):
+            rel_pos = self.positions[i]
+            rel_norm = self.normals[i]
+            new_pos = xdot(T, rel_pos)
+            new_norm = normalize(np.dot(R_total, rel_norm))
+            s.vertex = new_pos
+            s.normal = new_norm
+            
+            s.calc_mat(upright=False)
+
+        self.last_surface = xdot(T, self.last_surface)
+        self.positions.append(self.last_surface)
+        """
         mat = upright_rot_transform(np.array([-1,0,0]),vector)
-        for i,s in enumerate(self.surfaces):
-            aligned = np.dot(mat, s.normal)
+        if not dial == None:
+            rhr = axial_rotation(vector, np.radians(dial))
+        #Here is the bit causing the problem
+        for i, s in enumerate(self.surfaces):
+            if dial is None:
+                aligned = np.dot(mat, s.normal)
+                relative = self.positions[i]
+            else:
+                aligned = np.dot(np.dot(mat, rhr), s.normal)
+                relative = np.dot(rhr, self.positions[i])
             s.normal = aligned
-            relative = self.positions[i]
-            if np.linalg.norm(relative)==0:
-                s.vertex=self.position
-                s.calc_mat()
+            if np.linalg.norm(relative) == 0:
+                s.vertex = self.position
+                if dial == None:
+                    s.calc_mat()
+                else:
+                    s.calc_mat(upright=False)
                 continue
+
             relative = np.dot(mat,relative)
             s.vertex = self.position+relative
-            s.calc_mat()
+            s.calc_mat(upright=False)
+
         self.last_surface=self.last_surface+position
         self.positions.append(self.last_surface)
-
+        """
     def extend(self,additional:'assembly',relative, where="tail", normal=None):
         if np.dot(self.normal,additional.normal)<1:
             return
@@ -1454,7 +1497,7 @@ def build_surface(raw):
         if isinstance(raw['angles'],list):
             angles = raw['angles']
     shape = raw['shape']
-    radius = 1
+    radius = 0
     if "radius" in raw.keys():
         radius = float(raw['radius'])
     semidia = 1.0
@@ -1540,6 +1583,7 @@ def load_paths(param):
                 posi = list2vec(element['position'])
                 nor = None
                 angles = None
+                dial = None
                 if "normal" in element.keys():
                     nor = normalize(list2vec(element['normal']))
                 if "angles" in element.keys():
@@ -1550,7 +1594,9 @@ def load_paths(param):
                     if "flip" in element.keys():
                         if element['flip'] is True:
                             asem.invert()
-                    asem.place(posi,vector=nor, angles=angles)
+                    if "dial" in element.keys():
+                        dial = float(element['dial'])
+                    asem.place(posi, vector=nor, angles=angles, dial=dial)
                     a.add(asem)
                 elif "sid" in element.keys():
                     ind = element['sid']
