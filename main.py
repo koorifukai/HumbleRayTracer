@@ -438,7 +438,7 @@ class surface:
         if upright:
             r = upright_rot_transform(np.array([-1, 0, 0]), self.normal)
         elif external_rot is not None:
-            r = external_rot
+            r = external_rot[0:3,0:3]
         else:
             r = rot_transform(np.array([-1, 0, 0]), self.normal)
 
@@ -488,11 +488,11 @@ class assembly:
 
         self.surfaces.append(s)
 
-    def place(self,position,vector=None,angles=None,dial=None):
+    def place(self, position, vector=None, angles=None, dial=None):
         if not angles is None:
             vector = ang2vec(angles)
-        vector=normalize(vector)
-        self.position=position
+        vector = normalize(vector)
+        self.position = position
 
         R_align = rot_transform(np.array([-1, 0, 0]), vector)
         if dial is not None:
@@ -505,47 +505,26 @@ class assembly:
         T = np.eye(4)
         T[0:3, 0:3] = R_total
         T[0:3, 3] = position
-        
+
         for i, s in enumerate(self.surfaces):
             rel_pos = self.positions[i]
             rel_norm = self.normals[i]
             new_pos = xdot(T, rel_pos)
             new_norm = normalize(np.dot(R_total, rel_norm))
+
             s.vertex = new_pos
             s.normal = new_norm
-            
-            s.calc_mat(upright=False)
+
+            local_mat = np.eye(4)
+            local_mat[0:3, 0:3] = upright_rot_transform(np.array([-1, 0, 0]), rel_norm)
+            local_mat[0:3, 3] = rel_pos
+
+            global_mat = np.dot(T,local_mat)
+            #2 4x4 homogeneous matrices in succession
+            s.calc_mat(upright=False, external_rot=global_mat)
 
         self.last_surface = xdot(T, self.last_surface)
         self.positions.append(self.last_surface)
-        """
-        mat = upright_rot_transform(np.array([-1,0,0]),vector)
-        if not dial == None:
-            rhr = axial_rotation(vector, np.radians(dial))
-        #Here is the bit causing the problem
-        for i, s in enumerate(self.surfaces):
-            if dial is None:
-                aligned = np.dot(mat, s.normal)
-                relative = self.positions[i]
-            else:
-                aligned = np.dot(np.dot(mat, rhr), s.normal)
-                relative = np.dot(rhr, self.positions[i])
-            s.normal = aligned
-            if np.linalg.norm(relative) == 0:
-                s.vertex = self.position
-                if dial == None:
-                    s.calc_mat()
-                else:
-                    s.calc_mat(upright=False)
-                continue
-
-            relative = np.dot(mat,relative)
-            s.vertex = self.position+relative
-            s.calc_mat(upright=False)
-
-        self.last_surface=self.last_surface+position
-        self.positions.append(self.last_surface)
-        """
     def extend(self,additional:'assembly',relative, where="tail", normal=None):
         if np.dot(self.normal,additional.normal)<1:
             return
@@ -1436,7 +1415,7 @@ def load_lights(param):
                                 wavelength=int(raw_light['wavelength'])))
         if raw_light['type'] == "ring":
             para = raw_light['param']
-            radius = 0
+            radius = 1
             wh = 1
             deg_cw = 0
             if not isinstance(para,list):
@@ -1583,7 +1562,6 @@ def load_paths(param):
                 posi = list2vec(element['position'])
                 nor = None
                 angles = None
-                dial = None
                 if "normal" in element.keys():
                     nor = normalize(list2vec(element['normal']))
                 if "angles" in element.keys():
@@ -1591,6 +1569,7 @@ def load_paths(param):
                 if "aid" in element.keys():
                     ind = element['aid']
                     asem = assemblies[ind].copy()
+                    dial = None
                     if "flip" in element.keys():
                         if element['flip'] is True:
                             asem.invert()
