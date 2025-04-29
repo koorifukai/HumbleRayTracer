@@ -525,22 +525,19 @@ class assembly:
 
         self.last_surface = xdot(T, self.last_surface)
         self.positions.append(self.last_surface)
-    def extend(self,additional:'assembly',relative, where="tail", normal=None):
-        if np.dot(self.normal,additional.normal)<1:
+
+    def extend(self, additional: 'assembly', relative, where="tail", normal=None):
+        if np.dot(self.normal, additional.normal) < 1:
             return
         if isinstance(relative, float) or isinstance(relative, int):
-            relative = np.array([relative, 0, 0],np.float64)
-        for i,s in enumerate(additional.surfaces):
-            if where=="tail" or i>0:
-                s.vertex = s.vertex + self.last_surface
-            elif where=="head":
-                s.vertex = s.vertex + self.position
-            if i == 0:
-                s.vertex+=relative
+            relative = np.array([relative, 0, 0], np.float64)
+        for i, s in enumerate(additional.surfaces):
+            additional.positions[i]=additional.positions[i]+relative+self.last_surface
             self.surfaces.append(s)
             self.normals.append(s.normal)
-            self.positions.append(s.vertex)
-            self.last_surface = s.vertex
+            self.positions.append(additional.positions[i])
+        if where=="tail":
+            self.last_surface =additional.positions[-1]
 
     def invert(self):
         bef = np.stack(self.positions)
@@ -1062,8 +1059,10 @@ def set_axes_equal(ax):
 
 def save_figure(fig):
     fig.canvas.draw()
-    data = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
-    data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+    #data = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+    data = np.array(fig.canvas.buffer_rgba())
+    data = data.reshape(fig.canvas.get_width_height()[::-1] + (4,))
+    data = data[:, :, 0:3]
     #cv.imwrite("rendering.jpg", cv.cvtColor(data, cv.COLOR_BGR2RGB))
 
 def on_key(event):
@@ -2135,50 +2134,74 @@ def run_PSO(parameters):
     return parameters
 def ota():
     fig, ax = plt.subplots(subplot_kw={'projection': '3d'})
-    red = light(np.array([0, 0, -3]), normalize(np.array([1, 0, 0.1])), number=5,wavelength = 633)
-    red.linear(10)
-    green = light(np.array([0, 0, -1.5]), normalize(np.array([1, 0, 0.05])), number=5, wavelength=532)
-    green.linear(10)
+
+    red = light(np.array([0, 0, -12]), normalize(np.array([1, 0, 0.249328])), number=5, wavelength=633)
+    red.linear(20)
+    green = light(np.array([0, 0, -6]), normalize(np.array([1, 0, 0.176327])), number=5, wavelength=532)
+    green.linear(20)
     blue = light(np.array([0, 0, 0]), normalize(np.array([1, 0, 0])), number=5, wavelength=488)
-    blue.linear(10)
+    blue.linear(20)
 
     f1 = surface(coord=None, normal=None, shape="spherical",
-                 radius=23.71, semidia=10, mode="refraction",n2=1.691)
+                 radius=54.153, semidia=29.213, mode="refraction", n2=1.60738)
     f2 = surface(coord=None, normal=None, shape="spherical",
-                 radius=7331, semidia=10, mode="refraction", n1=1.691)
+                 radius=152.522, semidia=28.127, mode="refraction", n1=1.60738)
     f3 = surface(coord=None, normal=None, shape="spherical",
-                 radius=-24.45, semidia=6, mode="refraction", n2=1.673)
-    f4 = surface(coord=None, normal=None, shape="spherical",
-                 radius=21.896, semidia=6, mode="refraction", n1=1.673)
+                 radius=36, semidia=24.292, mode="refraction", n2=1.62041)
+    f4 = surface(coord=None, normal=None, shape="plano",
+                 radius=0, semidia=21.284, mode="refraction", n1=1.62041, n2=1.60342)
     f5 = surface(coord=None, normal=None, shape="spherical",
-                 radius=86.759, semidia=8, mode="refraction", n2=1.691)
-    f6 = surface(coord=None, normal=None, shape="spherical",
-                 radius=-20.494, semidia=8, mode="refraction", n1=1.691)
-    e1=assembly()
-    e1.add(f1,0)
-    e1.add(f2,4.831)
+                 radius=22.27, semidia=14.917, mode="refraction", n1=1.60342)
+    f6 = surface(coord=None, normal=None, shape="plano",
+                 radius=0, semidia=10.325, mode="aperture")
+    f7 = surface(coord=None, normal=None, shape="spherical",
+                 radius=-25.68, semidia=13.197, mode="refraction", n2=1.60342)
+    f8 = surface(coord=None, normal=None, shape="plano",
+                 radius=0, semidia=16.482, mode="refraction", n1=1.60342, n2=1.62041)
+    f9 = surface(coord=None, normal=None, shape="spherical",
+                 radius=-36.98, semidia=18.942, mode="refraction", n1=1.62041)
+    f10 = surface(coord=None, normal=None, shape="spherical",
+                  radius=196.41, semidia=21.327, mode="refraction", n2=1.60738)
+    f11 = surface(coord=None, normal=None, shape="spherical",
+                  radius=-67.14, semidia=21.662, mode="refraction", n1=1.60738)
+    f12 = surface(coord=None, normal=None, shape="plano",
+                  radius=0, semidia=25, mode="absorption")
+
+    e1 = assembly()
+    e1.add(f1, 0)
+    e1.add(f2, 8.747)
 
     e2 = assembly()
     e2.add(f3, 0)
-    e2.add(f4, 0.975)
+    e2.add(f4, 14)
+    e2.add(f5, 3.777)
 
     e3 = assembly()
-    e3.add(f5, 0)
-    e3.add(f6, 3.127)
+    e3.add(f7, 0)
+    e3.add(f8, 3.777)
+    e3.add(f9, 10.834)
 
-    e1.extend(e2,5.86)
-    e1.extend(e3,4.822)
-    e1.place(np.array([5,0,0]),np.array([-1,0,0]))
+    e4 = assembly()
+    e4.add(f10, 0)
+    e4.add(f11, 6.858)
 
-    focus=surface(coord=None, normal=None,shape="plano",height=20,width=20, mode="refraction")
-    termino = surface(coord=e1.last_surface + np.array([61.24, 0, 0]), normal=None, angles=[0, 0],
-                      shape="plano", height=20, width=20, mode="refraction")
-    focus.relocate(e1.last_surface+np.array([41.24,0,0]))
+    e1.extend(e2, 0.5)
+    e1.add(f6, 14.253)
+    e1.extend(e3, 12.428)
+    e1.extend(e4, 0.5)
+    e1.add(f12, 57.315)
+
+    e1.place(np.array([0, 0, 0]), np.array([-1, 0, 0]))
+
+    # focus=surface(coord=None, normal=None,shape="plano",height=20,width=20, mode="refraction")
+    # termino = surface(coord=e1.last_surface + np.array([61.24, 0, 0]), normal=None, angles=[0, 0],
+    #                  shape="plano", height=20, width=20, mode="refraction")
+    # focus.relocate(e1.last_surface+np.array([41.24,0,0]))
 
     sb = train()
     sb.add(e1)
-    sb.append(focus)
-    sb.append(termino)
+    # sb.append(focus)
+    # sb.append(termino)
 
     sb.set_light(red)
     sb.propagate()
@@ -2193,15 +2216,13 @@ def ota():
     sb.render(ax)
 
     set_axes_equal(ax)
+    ax.view_init(elev=0, azim=-90)
     plt.tight_layout()
     fig.canvas.draw()
-    data = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
-    data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
-    global via_gui
-    if via_gui is True:
-      #cv.imwrite("rendering.jpg",cv.cvtColor(data,cv.COLOR_BGR2RGB))
-      fig.canvas.manager.window.wm_geometry("+%d+%d"%(10,10))
-      fig.canvas.mpl_connect('key_press_event', on_key)
+    # data = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+    data = np.array(fig.canvas.buffer_rgba())
+    data = data.reshape(fig.canvas.get_width_height()[::-1] + (4,))
+    data = data[:, :, 0:3]
     plt.show()
 
 def run_gui():
