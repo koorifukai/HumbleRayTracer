@@ -488,15 +488,15 @@ class assembly:
 
         self.surfaces.append(s)
 
-    def place(self, position, vector=None, angles=None, dial=None):
+    def place(self, position, normal=np.array([-1,0,0]), angles=None, dial=None):
         if not angles is None:
-            vector = ang2vec(angles)
-        vector = normalize(vector)
+            normal = ang2vec(angles)
+        normal = normalize(normal)
         self.position = position
 
-        R_align = rot_transform(np.array([-1, 0, 0]), vector)
+        R_align = rot_transform(np.array([-1, 0, 0]), normal)
         if dial is not None:
-            R_dial = axial_rotation(vector, np.radians(dial))
+            R_dial = axial_rotation(normal, np.radians(dial))
             R_total = np.dot(R_dial, R_align)
         else:
             R_total = R_align
@@ -523,10 +523,9 @@ class assembly:
             #2 4x4 homogeneous matrices in succession
             s.calc_mat(upright=False, external_rot=global_mat)
 
-        self.last_surface = xdot(T, self.last_surface)
-        self.positions.append(self.last_surface)
+        self.last_surface = self.positions[-1]
 
-    def extend(self, additional: 'assembly', relative, where="tail", normal=None):
+    def extend(self, additional: 'assembly', relative, where="tail"): #only for axial objects
         if np.dot(self.normal, additional.normal) < 1:
             return
         if isinstance(relative, float) or isinstance(relative, int):
@@ -1574,7 +1573,7 @@ def load_paths(param):
                             asem.invert()
                     if "dial" in element.keys():
                         dial = float(element['dial'])
-                    asem.place(posi, vector=nor, angles=angles, dial=dial)
+                    asem.place(posi, normal=nor, angles=angles, dial=dial)
                     a.add(asem)
                 elif "sid" in element.keys():
                     ind = element['sid']
@@ -1754,7 +1753,6 @@ def simple_ray_tracer_main_w_analysis(parameters):
         for j,s in enumerate(t.surfaces):
             if not s in plotted_surfaces:
                 plotted_surfaces.append(s)
-    #imakoko
 
     columns=['id','v1','v2','v3','c1','c2','c3','ang2normal','wv','intensity','lid']
     lines=[]
