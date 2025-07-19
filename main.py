@@ -1592,6 +1592,8 @@ def load_paths(param):
                     else:
                         sur = surfaces[ind]
                         used_sid.append(ind)
+                    if "dial" in element.keys():
+                        sur.dial = float(element['dial'])
                     sur.relocate(posi,normal=nor, angles=angles)
                     a.append(sur)
         paths.append(a)
