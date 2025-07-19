@@ -6,6 +6,7 @@ plt.style.use('dark_background')
 plt.rcParams["font.size"] = 15
 from mpl_toolkits.mplot3d import Axes3D
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+matplotlib.rcParams['axes3d.mouserotationstyle'] = 'azel'
 
 import cv2 as cv
 from PIL import Image
@@ -190,8 +191,16 @@ def simple_convex_hull(fourpoints, cand):
     fp = fourpoints.reshape((4, 2))
     cand = cand.reshape(2)
     vectors = fp - cand
-    cross = np.cross(vectors, np.roll(vectors, -1, axis=0))
-    if all(cp >= 0 for cp in cross) or all(cp <= 0 for cp in cross):
+
+    # Promote to 3D: [x, y] -> [x, y, 0]
+    vectors3D = np.hstack([vectors, np.zeros((4, 1))])
+    rolled3D = np.roll(vectors3D, -1, axis=0)
+    cross = np.cross(vectors3D, rolled3D)
+
+    # Use only the Z-component of the 3D cross product
+    z_cross = cross[:, 2]
+
+    if np.all(z_cross >= 0) or np.all(z_cross <= 0):
         return 1
     else:
         return 0
@@ -1026,36 +1035,37 @@ def plot_ray(ax: Axes3D, incident: ray):
             ax.plot(xo, yo, zo, linestyle=linesty, color=incident.color, alpha=ray_display_density * density[-1][1])
 
 def set_axes_equal(ax):
+    # Extract 3D limits
     x_limits = ax.get_xlim3d()
     y_limits = ax.get_ylim3d()
     z_limits = ax.get_zlim3d()
 
-    x_range = abs(x_limits[1] - x_limits[0])
-    x_middle = np.mean(x_limits)
-    y_range = abs(y_limits[1] - y_limits[0])
-    y_middle = np.mean(y_limits)
-    z_range = abs(z_limits[1] - z_limits[0])
-    z_middle = np.mean(z_limits)
+    # Compute centers and plot radius
+    x_middle = 0.5 * sum(x_limits)
+    y_middle = 0.5 * sum(y_limits)
+    z_middle = 0.5 * sum(z_limits)
+    plot_radius = 0.5 * max(
+        abs(x_limits[1] - x_limits[0]),
+        abs(y_limits[1] - y_limits[0]),
+        abs(z_limits[1] - z_limits[0])
+    )
 
-    plot_radius = 0.5 * max([x_range, y_range, z_range])
-
+    # Set symmetric limits around center
     ax.set_xlim3d([x_middle - plot_radius, x_middle + plot_radius])
     ax.set_ylim3d([y_middle - plot_radius, y_middle + plot_radius])
     ax.set_zlim3d([z_middle - plot_radius, z_middle + plot_radius])
-    ax.set_xlabel("x")
-    ax.set_ylabel("y")
-    ax.set_zlabel("z")
-    if matplotlib.__version__ > "3.3.0":
-        ax.set_box_aspect((np.ptp(np.linspace(x_middle - plot_radius, x_middle + plot_radius, 3)),
-                           np.ptp(np.linspace(y_middle - plot_radius, y_middle + plot_radius, 3)),
-                           np.ptp(np.linspace(z_middle - plot_radius, z_middle + plot_radius, 3))))
-    if show_grid is False:
+
+    # Enforce box aspect ratio (requires matplotlib ≥ 3.3)
+    if hasattr(ax, 'set_box_aspect'):
+        ax.set_box_aspect([1, 1, 1])
+
+    # Optional appearance tweaks
+    if not show_grid:
         ax.set_axis_off()
-    elif fill_with_grey is False:
+    elif not fill_with_grey:
         ax.xaxis.pane.fill = False
         ax.yaxis.pane.fill = False
         ax.zaxis.pane.fill = False
-
 def save_figure(fig):
     fig.canvas.draw()
     #data = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
