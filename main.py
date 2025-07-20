@@ -503,7 +503,7 @@ class assembly:
         normal = normalize(normal)
         self.position = position
 
-        R_align = rot_transform(np.array([-1, 0, 0]), normal)
+        R_align = upright_rot_transform(np.array([-1, 0, 0]), normal)
         if dial is not None:
             R_dial = axial_rotation(normal, np.radians(dial))
             R_total = np.dot(R_dial, R_align)
@@ -1062,10 +1062,15 @@ def set_axes_equal(ax):
     # Optional appearance tweaks
     if not show_grid:
         ax.set_axis_off()
+        return
     elif not fill_with_grey:
         ax.xaxis.pane.fill = False
         ax.yaxis.pane.fill = False
         ax.zaxis.pane.fill = False
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_zlabel("z")
+    
 def save_figure(fig):
     fig.canvas.draw()
     #data = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
