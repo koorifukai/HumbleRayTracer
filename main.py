@@ -6,7 +6,8 @@ plt.style.use('dark_background')
 plt.rcParams["font.size"] = 15
 from mpl_toolkits.mplot3d import Axes3D
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-matplotlib.rcParams['axes3d.mouserotationstyle'] = 'azel'
+if tuple(map(int, matplotlib.__version__.split('.')[:2])) > (3, 10):
+    matplotlib.rcParams['axes3d.mouserotationstyle'] = 'azel'
 
 import cv2 as cv
 from PIL import Image
@@ -1070,7 +1071,7 @@ def set_axes_equal(ax):
     ax.set_xlabel("x")
     ax.set_ylabel("y")
     ax.set_zlabel("z")
-    
+
 def save_figure(fig):
     fig.canvas.draw()
     #data = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
@@ -1410,6 +1411,15 @@ def list2vec(unknown):
 def load_lights(param):
     raw_lights = param
     lights = []
+
+    if len(param) == 1 and isinstance(param[0], dict):
+        if len(param[0].items())>1:
+            raw_lights = []
+            for key,val in param[0].items():
+                raw_lights.append({key:val})
+        else:
+            raw_lights = param
+
     for i in range(len(raw_lights)):
         raw_light = raw_lights[i]
         raw_light = list(raw_light.values())[0]
@@ -1531,6 +1541,12 @@ def build_surface(raw):
     return surface(coord,normal,shape,angles,radius,semidia,efl,dial,height,width,mode,n1,n2,transmission,select,color,alpha)
 def load_surfaces(surfaces):
     surs={}
+    if len(surfaces) == 1 and isinstance(surfaces[0], dict):
+        if len(surfaces[0].items())>1:
+            new_sur=[]
+            for key,val in surfaces[0].items():
+                new_sur.append({key:val})
+            surfaces = new_sur
     for i in range(len(surfaces)):
         para = surfaces[i]
         para = list(para.values())[0]
