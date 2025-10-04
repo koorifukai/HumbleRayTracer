@@ -6,9 +6,10 @@ plt.style.use('dark_background')
 plt.rcParams["font.size"] = 15
 from mpl_toolkits.mplot3d import Axes3D
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-if tuple(map(int, matplotlib.__version__.split('.')[:2])) > (3, 10):
+try:
     matplotlib.rcParams['axes3d.mouserotationstyle'] = 'azel'
-
+except:
+    pass
 import cv2 as cv
 from PIL import Image
 import os
@@ -2355,3 +2356,4 @@ if via_gui is True:
             break
 else:
     ota()
+
