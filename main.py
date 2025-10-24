@@ -1267,11 +1267,10 @@ class train:
             vec = normalize(relative)
             self.light.vector=vec
             distance = np.linalg.norm(relative)
-            ratio = -np.dot(vec,first.normal)
-
-            area = first.height*first.width+first.semidia**2*np.pi-1
-            radi = np.sqrt(area/np.pi)
-            divergence = abs(np.arctan(radi*ratio/distance))
+            ratio = np.dot(vec,np.array([1,0,0]))
+            area = first.height * first.width + first.semidia ** 2 * np.pi - 1
+            radi = np.sqrt(area / np.pi)
+            divergence = 0.9*abs(np.arctan(radi * ratio / distance))
             self.light.point(divergence)
 
         for i, s in enumerate(self.surfaces):
@@ -2356,4 +2355,5 @@ if via_gui is True:
             break
 else:
     ota()
+
 
