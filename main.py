@@ -1267,7 +1267,7 @@ class train:
             vec = normalize(relative)
             self.light.vector=vec
             distance = np.linalg.norm(relative)
-            ratio = np.dot(vec,np.array([1,0,0]))
+            ratio = np.dot(vec,-1 * first.normal)
             area = first.height * first.width + first.semidia ** 2 * np.pi - 1
             radi = np.sqrt(area / np.pi)
             divergence = 0.9*abs(np.arctan(radi * ratio / distance))
@@ -2357,6 +2357,7 @@ if via_gui is True:
             break
 else:
     ota()
+
 
 
 
