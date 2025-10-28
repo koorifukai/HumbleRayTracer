@@ -1282,10 +1282,12 @@ class train:
                 relative = xdot(s.move,first.vertex)
                 vec = normalize(relative)
                 distance = np.linalg.norm(relative)
-                ratio = -np.dot(vec,first.normal)
+                #shoot towards next surface
+                ratio = np.dot(vec,np.array([1,0,0]))
                 area = first.height * first.width + first.semidia ** 2 * np.pi - 1
                 radi = np.sqrt(area / np.pi)
-                divergence = abs(np.arctan(radi * ratio / distance))
+                divergence = 0.9*abs(np.arctan(radi * ratio / distance))
+                #shrink cone angle to make sure all rays intersect
                 s.fan = divergence
                 s.going = relative
     def propagate(self):
@@ -2355,5 +2357,6 @@ if via_gui is True:
             break
 else:
     ota()
+
 
 
